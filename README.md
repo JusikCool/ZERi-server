@@ -1,192 +1,248 @@
-# 📉 ZERi - Backend API
+# BEFORE — 서버
 
-Adaptive AI 기반 금융 하방 리스크 예측 및 시각화 시스템의 백엔드 API 서버입니다.
+리스크 우선 관점의 미국주식 리뷰 API. 스펙: `BEFORE_DOCS_v1` (DB v0.4 / API v1.0).
 
-FastAPI를 기반으로 구축되었으며, Temporal Fusion Transformer(TFT) 모델 추론, XAI(설명 가능한 AI) 데이터 반환, 모델 검증 지표를 제공합니다.
+Phase 0 골격 — FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
+비즈니스 로직은 아직 없고, 데이터 구조와 공통 인프라만 깔려 있는 상태.
 
-## 🛠 Tech Stack
+## 스택
 
-- **Framework**: FastAPI (Python 3.10+)
-- **AI/ML**: PyTorch, PyTorch Forecasting (TFT Model)
-- **Data**: Pandas, NumPy, yfinance, FRED API
-- **Database**: PostgreSQL (Partitioning & Indexing)
-- **Infrastructure**: Docker, AWS S3/CloudFront (Static Asset Serving)
-- **Caching**: Redis (LRU Strategy)
+- Python 3.12, [uv](https://github.com/astral-sh/uv) 패키지 매니저 (이미지 안에서만 사용)
+- FastAPI · Pydantic v2
+- SQLAlchemy 2.0 (async, asyncpg)
+- Alembic
+- PostgreSQL 16
 
-## 🚀 Architecture & Scalability
-
-대규모 시계열 데이터 처리와 수천 개 종목 확장을 고려하여 **'데이터 전송 최소화'**와 **'서버 부하 분산'**에 초점을 맞춘 아키텍처를 채택했습니다.
-
-### 1. Static Pre-generation (S3/CDN)
-
-- 과거 주가 및 예측 히스토리는 불변(Immutable) 데이터입니다.
-- 배치 작업(Batch Job) 완료 후 종목별 전체 히스토리 데이터를 JSON 파일(예: `AAPL_history.json`)로 생성하여 **AWS S3**에 업로드합니다.
-- 프론트엔드는 CDN(CloudFront)을 통해 정적 파일을 직접 호출함으로써 백엔드 I/O와 DB 부하를 원천 차단합니다.
-
-### 2. Downsampling & Lazy Loading
-
-- 조회 기간에 따라 데이터 밀도를 동적으로 조절하여 페이로드 크기를 최적화합니다.
-  - **~6개월**: 일봉(Daily) 데이터 제공
-  - **6개월~2년**: 주봉(Weekly) 데이터 제공
-  - **2년 이상**: 월봉(Monthly) 데이터 제공
-- 차트 초기 로딩 시 기본 구간을 '최근 6개월'로 제한하여 렌더링 성능을 보장합니다.
-
-### 3. Redis LRU Caching
-
-- 동적 연산이 필요한 API 응답에 대해 Redis를 사용하되, 메모리 한도를 설정하고 자주 조회되는 **활성 종목(Active Tickers)**만 유지하는 LRU 정책을 적용합니다.
-
-### 4. PostgreSQL Table Partitioning
-
-- 데이터 비대화를 방지하기 위해 연도별 또는 종목 심볼 기준 파티셔닝을 적용합니다.
-- 예측 결과는 행(Row)으로 늘리지 않고 `FLOAT[]` 타입으로 압축 저장하여 스캔 효율을 극대화합니다.
-
-## 🗄 Database Design
-
-### Optimized Schema
+## 디렉토리 구조
 
 ```
--- 연도별 범위 파티셔닝 적용
-CREATE TABLE stock_history (
-    ticker VARCHAR(10) NOT NULL,
-    base_date DATE NOT NULL,
-    open_price NUMERIC(12, 2),
-    high_price NUMERIC(12, 2),
-    low_price NUMERIC(12, 2),
-    close_price NUMERIC(12, 2),
-    volume BIGINT,
-    -- 다중 분위수 예측값을 FLOAT 배열로 압축 저장
-    pred_1d_ago FLOAT[], -- [q_0.1, q_0.25, q_0.5]
-    pred_5d_ago FLOAT[],
-    pred_10d_ago FLOAT[],
-    PRIMARY KEY (ticker, base_date)
-) PARTITION BY RANGE (base_date);
-
--- 복합 인덱스: Ticker 선별 후 Date 범위 스캔 최적화
-CREATE INDEX idx_stock_ticker_date ON stock_history (ticker, base_date DESC);
+app/
+├── main.py                 # FastAPI 앱, 미들웨어, 예외 핸들러, /health
+├── core/
+│   ├── config.py           # pydantic-settings (.env 로드)
+│   ├── error_codes.py      # ErrorCode enum + HTTP/메시지 매핑 (스펙 §0.4)
+│   └── exceptions.py       # AppException
+├── schemas/
+│   └── common.py           # ApiResponse / ApiError 공통 envelope (스펙 §0.2)
+├── db/
+│   ├── base.py             # DeclarativeBase
+│   ├── session.py          # async engine + get_db()
+│   └── models/             # ORM 모델 12개 (테이블당 한 파일)
+└── api/
+    ├── deps.py             # 공통 FastAPI 의존성
+    └── v1/
+        └── router.py       # /v1 라우터 집합 (단계별로 endpoint 추가)
+alembic/
+├── env.py                  # async 대응
+├── script.py.mako
+└── versions/               # `alembic revision --autogenerate` 결과물
 ```
 
-## 📋 API Specification
-
-### Base URL
+## 레이어 규칙
 
 ```
-http://{host}:{port}/api/v1
+api        → 라우팅, 검증, response_model, Depends. 비즈니스 로직 금지.
+service    → 비즈니스 흐름, 트랜잭션 단위, 레포지토리 조합.
+repository → SQLAlchemy 쿼리, join, pagination.
+schema     → Pydantic DTO (API 계약).
 ```
 
-### 1. 추론 (Prediction) API
+`service/`, `repository/` 디렉토리는 첫 엔드포인트 구현되는 시점(Phase 1+)에 추가.
 
-특정 종목의 향후 10일간 다중 분위수 기반 하방 리스크 예측값을 반환합니다.
+## 워크플로 — Docker only
 
-- **URL**: `/risk/predict/{ticker}`
-- **Method**: `GET`
-- **Response (200 OK)**:
+이 프로젝트는 호스트 가상환경을 쓰지 않는다. Python · uv · 의존성 · 마이그레이션 · 테스트 · 린트 전부 `api` 컨테이너 안에서 돌아가고, 호스트엔 Docker만 있으면 된다.
 
-```
-{
-  "ticker": "AAPL",
-  "base_date": "2026-03-30",
-  "target_dates": ["2026-03-31", "2026-04-01", "..."],
-  "predictions": {
-    "q_0.1": [140.5, 139.2, "..."],
-    "q_0.25": [145.0, 144.1, "..."],
-    "q_0.5": [150.2, 149.8, "..."]
-  },
-  "current_vix": 22.4,
-  "realized_volatility": 0.045
-}
+> 호스트 루트에 빈 `.venv/` 폴더가 보일 수 있는데, Docker가 컨테이너 내부 `/app/.venv`에 named volume(`apivenv`)을 얹기 위해 만든 마운트 자국일 뿐이야. `.gitignore`에 잡혀 있으니 건드리지 말 것. 호스트에서 절대 `uv sync` 실행하지 말 것.
+
+### 최초 셋업
+
+```bash
+cp .env.example .env             # 디폴트는 docker-compose 값과 동일. 필요시 수정
+docker compose up --build -d     # 첫 실행은 PG 16 + API 빌드까지 다 돌아감
 ```
 
-### 2. 설명 가능성 (XAI) API
+확인:
 
-TFT 모델의 Variable Selection Network(VSN)를 기반으로 하락 예측의 주요 원인을 설명합니다.
+- API:    http://localhost:8000/health  → `{"status":"ok"}`
+- Docs:   http://localhost:8000/docs
+- DB:     `localhost:5432` (user `before` / pw `before` / db `before`)
 
-- **URL**: `/risk/xai/{ticker}`
-- **Method**: `GET`
-- **Query Params**: `top_k` (Default: 5)
-- **Implementation Note**: 시스템 안정성을 위해 템플릿 기반(Template-based) 텍스트 구성을 사용합니다.
-- **Response (200 OK)**:
+### 첫 마이그레이션
 
-```
-{
-  "ticker": "AAPL",
-  "timestamp": "2026-03-30T15:00:00Z",
-  "variable_importance": [
-    {"feature": "US_Fed_Rate", "weight": 0.45},
-    {"feature": "VIX", "weight": 0.25}
-  ],
-  "attention_summary": "미국 기준금리(45%)와 시장 공포 지수(25%)가 하방 압력의 주원인으로 분석되었습니다."
-}
+```bash
+docker compose exec api alembic revision --autogenerate -m "initial"
+docker compose exec api alembic upgrade head
 ```
 
-### 3. 검증 및 성능 (Metrics) API
+자동생성된 마이그레이션 파일은 호스트 `alembic/versions/`에 떨어지니까 (bind mount), 다른 소스코드와 동일하게 리뷰하고 커밋하면 된다.
 
-모델 사후 검증 지표(Violation Rate, Kupiec POF Test 등)를 반환합니다.
+## 자주 쓰는 명령어
 
-- **URL**: `/risk/metrics/{ticker}`
-- **Method**: `GET`
-- **Response (200 OK)**:
+전부 `api` 컨테이너 안에서 실행:
 
-```
-{
-  "ticker": "AAPL",
-  "window_days": 252,
-  "violation_rate": 0.042,
-  "kupiec_pof_test": {
-    "statistic": 1.25,
-    "p_value": 0.068,
-    "is_valid": true
-  }
-}
-```
+```bash
+# 로그 / 상태
+docker compose logs -f api
+docker compose ps
 
-### 4. 과거 이력 조회 (History) API
+# 마이그레이션
+docker compose exec api alembic revision --autogenerate -m "add_xyz"
+docker compose exec api alembic upgrade head
+docker compose exec api alembic downgrade -1
+docker compose exec api alembic check        # ORM ↔ DB drift 점검
 
-과거 OHLCV와 시점별 모델 예측 밴드 데이터를 반환합니다. 캔들스틱 차트 렌더링에 사용됩니다.
+# 린트 / 포맷
+docker compose exec api ruff check .
+docker compose exec api ruff format .
 
-- **URL**: `/risk/history/{ticker}`
-- **Method**: `GET`
-- **Query Params**: `start_date`, `end_date`
-- **Response (200 OK)**:
+# 테스트 (Phase 1+에서 추가)
+docker compose exec api pytest
 
-```
-{
-  "ticker": "AAPL",
-  "history": [
-    {
-      "date": "2026-03-25",
-      "open": 154.0, "high": 156.5, "low": 153.0, "close": 155.0,
-      "pred_1d_ago": {"q_0.1": 145.0, "q_0.25": 148.0, "q_0.5": 152.0},
-      "pred_5d_ago": {...},
-      "pred_10d_ago": {...}
-    }
-  ]
-}
+# psql 셸
+docker compose exec db psql -U before -d before
+
+# DB 밀어버리기 (데이터 + 마이그레이션 모두 삭제)
+docker compose down -v
 ```
 
-### 5. 파이프라인 동기화 (Pipeline Sync) API
+`docker compose exec api` 매번 치기 귀찮으면 alias 잡아둘 것:
 
-데이터 수집 및 전처리를 수동 가동합니다. 스케줄러 복구용으로 사용됩니다.
-
-- **URL**: `/pipeline/sync`
-- **Method**: `POST`
-- **Header**: `X-Admin-Token` (Internal API Key)
-- **Response (202 Accepted)**:
-
-```
-{
-  "message": "Data pipeline synchronization started successfully.",
-  "status": "processing"
-}
+```bash
+# ~/.zshrc 또는 ~/.bashrc
+alias dca='docker compose exec api'
+# 사용
+dca alembic upgrade head
+dca pytest
 ```
 
-## ⚠️ Error Responses
+## IDE 안내
 
-| Status Code | Error Code             | Description              | Example Body                                          |
-| ----------- | ---------------------- | ------------------------ | ----------------------------------------------------- |
-| **404**     | `TICKER_NOT_FOUND`     | 지원하지 않는 티커 조회  | `{"error": "TICKER_NOT_FOUND", "message": "..."}`     |
-| **422**     | `INVALID_PARAMETER`    | 파라미터 제약 조건 위반  | `{"error": "INVALID_PARAMETER", "message": "..."}`    |
-| **503**     | `PREDICTION_NOT_READY` | 당일 배치 작업 지연/오류 | `{"error": "PREDICTION_NOT_READY", "message": "..."}` |
-| **401**     | `UNAUTHORIZED_ACCESS`  | 관리자 토큰 불일치/누락  | `{"error": "UNAUTHORIZED_ACCESS", "message": "..."}`  |
+호스트에 venv가 없으니까 VS Code / PyCharm에서 `fastapi`, `sqlalchemy` 같은 임포트가 빨갛게 뜬다. 두 가지 선택:
 
+1. **그냥 무시**. 타입 체크는 시끄럽지만 컨테이너에서 잘 돈다.
+2. **Dev Container 모드** (자동완성이 거슬리면 추천). `.devcontainer/` 설정을 추가하면 VS Code가 `api` 컨테이너 안에서 동작하면서 자동완성·정의로 이동이 정상으로 살아난다. Phase 0에선 안 깔아둠 — 필요하면 말할 것.
 
+## 브랜치 전략
 
+```
+main
+└── develop
+    ├── feature/core-setup    ← Phase 0 (이 PR)
+    ├── feature/auth          ← Phase 1 (A)
+    ├── feature/me-watchlist  ← Phase 1 (A)
+    ├── feature/tickers       ← Phase 2 (B)
+    ├── feature/risk          ← Phase 2 (B)
+    ├── feature/history       ← Phase 2 (B)
+    └── feature/model-quality ← Phase 2 (B)
+```
+
+규칙:
+
+1. `main` 직접 push 금지.
+2. `develop` 기준으로 feature 브랜치 생성.
+3. PR은 최소 1명 리뷰 후 merge.
+4. **`app/db/models/`, `alembic/versions/` 변경은 A·B 둘 다 리뷰 필수.** 충돌 잘 남.
+5. Alembic migration 파일은 작은 단위로 자주 merge (충돌 방지).
+6. Response schema 바뀌면 같은 날 프론트에 즉시 공유.
+
+## 커밋 컨벤션
+
+[Conventional Commits](https://www.conventionalcommits.org/) 기반.
+
+```
+<type>(<scope>): <subject>
+
+[본문]
+
+[footer]
+```
+
+### type
+
+| type | 언제 쓰나 |
+|------|----------|
+| `feat` | 새 기능 (엔드포인트, 모델, 비즈니스 로직 추가) |
+| `fix` | 버그 수정 |
+| `refactor` | 동작 변경 없이 구조만 바꿈 |
+| `perf` | 성능 개선 |
+| `docs` | 문서·주석만 변경 |
+| `test` | 테스트 추가·수정 |
+| `chore` | 빌드/설정/의존성/스캐폴드처럼 코드 외 잡일 |
+| `ci` | GitHub Actions 등 CI 파이프라인 변경 |
+| `style` | 포맷·세미콜론 등 의미 없는 변경 (가급적 안 씀) |
+
+### scope (이 프로젝트 기준)
+
+| scope | 범위 |
+|-------|------|
+| `core` | `app/core/`, 공통 인프라 |
+| `auth` | 인증·JWT |
+| `me` | `/me/*` (워치리스트·이력·프로필) |
+| `tickers` | 종목 검색 |
+| `risk` | `/risk/*` |
+| `history` | 분석 이력 |
+| `models` | 모델 검증 (`/models/*`) |
+| `db` | ORM 모델, schema |
+| `migration` | Alembic 마이그레이션 |
+| `infra` | Docker, compose, env |
+| `deps` | 의존성 추가/삭제 |
+| `ci` | CI 설정 |
+
+여러 scope에 걸치면 생략하거나 `*` 사용.
+
+### subject 규칙
+
+- 명령형 현재시제: `add`, `fix`, `update` (`added`, `fixing` X)
+- 첫 글자 소문자, 마침표 X
+- 한국어/영어 둘 다 OK. 단 한 PR 안에선 한 언어로 통일
+- 70자 이내 권장
+
+### 예시
+
+```
+feat(auth): add POST /auth/signup with disclaimer ack
+
+- bcrypt 해시는 argon2id 로 처리
+- 가입과 disclaimer_ack 동일 트랜잭션에서 INSERT
+- email 중복 시 EMAIL_DUPLICATE 응답
+
+Refs: spec §1
+```
+
+```
+fix(risk): predictions JSONB array 파싱 오류 수정
+```
+
+```
+chore(infra): Docker-only 워크플로로 전환, host venv 제거
+```
+
+```
+refactor(db): risk_grades.ticker FK ondelete RESTRICT 통일
+```
+
+### 스코프 단위 권장
+
+- 마이그레이션은 ORM 변경과 **같은 커밋**에 함께 들어가는 게 원칙.
+  ```
+  feat(db): add company_name_kr to tickers
+   M app/db/models/ticker.py
+   A alembic/versions/2026_05_08_..._add_company_name_kr.py
+  ```
+- 단, 마이그레이션 자동생성에서 의도치 않은 diff가 섞여 있으면 그 부분은 별도 PR로 분리.
+
+## ERD ↔ 코드 차이 메모
+
+ORM은 v0.4 ERD를 따르되, 의도적으로 다음을 보강했다:
+
+| 보강 | 이유 |
+|------|------|
+| `tickers.Field` → `tickers.company_name_kr` | ERD 캡처 오류. 스펙엔 v0.5에서 한국어 회사명으로 명시. |
+| `Prediction.ticker` FK + `UNIQUE(ticker, base_date, horizon_days)` 추가 | 스펙 §3에서 자연키로 표시. ERD에 누락. |
+| `BacktestResult.window_days`, `violation_rate` 추가 | 스펙 §3 / §7에 있는데 ERD에 없음. |
+| `analysis_history`(user_id, ticker, prediction_id) FK, `disclaimer_acks.user_id` FK, `xai_explanations.prediction_id UNIQUE`, `prediction_evaluations.prediction_id UNIQUE` | 스펙 §schema-rel에 있는데 ERD SQL 덤프에서 빠져 있음. |
+| `users.email UNIQUE` | 스펙 §1, `EMAIL_DUPLICATE` 응답에 필요. |
+| JSON 컬럼 → PostgreSQL `JSONB` | 인덱싱 가능. |
+
+`analysis_history` 끝의 `=사용자 / 조회 / NULL` 깨진 행은 ERD 캡처 오류로 폐기.

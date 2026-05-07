@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: before-db
+    environment:
+      POSTGRES_USER: before
+      POSTGRES_PASSWORD: before
+      POSTGRES_DB: before
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U before -d before"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: before-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      ENV: dev
+      DATABASE_URL: postgresql+asyncpg://before:before@db:5432/before
+      JWT_SECRET: dev-secret-change-me
+      JWT_ALGORITHM: HS256
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - ./:/app
+      # Keep the image's linux .venv alive under the bind mount, off the host filesystem.
+      - apivenv:/app/.venv
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  apivenv:
