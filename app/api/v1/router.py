@@ -11,10 +11,14 @@ Convention (matches the spec §8 screen-to-API matrix):
 
 from fastapi import APIRouter
 
+from app.api.v1.endpoints import prices, tickers
+
 api_router = APIRouter(prefix="/v1")
 
-# Endpoint routers will be wired here in subsequent phases, e.g.:
-#
-# from app.api.v1.endpoints import auth, me, watchlist, tickers, risk, history, models
+api_router.include_router(prices.router, prefix="/prices", tags=["prices"])
+api_router.include_router(tickers.router, prefix="/tickers", tags=["tickers"])
+
+# 추후 단계에서 추가:
+# from app.api.v1.endpoints import auth, me, watchlist, risk, history, models
 # api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 # api_router.include_router(me.router,   prefix="/me",   tags=["me"])
