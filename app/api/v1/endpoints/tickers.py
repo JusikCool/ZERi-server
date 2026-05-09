@@ -1,9 +1,7 @@
-"""POST /v1/tickers/sync/{target}
+"""tickers 엔드포인트.
 
-`target=all`이면 시드 50종목 전체를 yfinance에서 갱신.
-구체적인 티커면 그 한 종목만. 둘 다 PG `ON CONFLICT DO UPDATE`로 멱등.
-
-매일 한 번 호출해서 시가총액 등을 최신화하는 용도.
+- POST /v1/tickers/sync/{target}: 시드 50종목 또는 단일 티커 메타 갱신
+- GET  /v1/tickers/search?q=...:  자동완성용 검색 (한글/영문/티커 모두)
 """
 
 from __future__ import annotations
@@ -11,9 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -134,4 +132,136 @@ async def sync_tickers(
             failed=failed,
             items=items,
         )
+    )
+
+
+# ---------------------------------------------------------------------------
+# 전체 리스트 — 프런트에서 클라이언트 사이드 필터/자동완성용 (50종목엔 최적)
+# ---------------------------------------------------------------------------
+
+
+class TickerLite(BaseModel):
+    ticker: str
+    company_name: str
+    company_name_kr: str | None
+    sector: str | None
+
+
+class TickerListData(BaseModel):
+    count: int
+    items: list[TickerLite]
+
+
+@router.get(
+    "",
+    response_model=ApiResponse[TickerListData],
+    summary="활성 종목 전체 리스트 (프런트 진입 시 1회 호출용)",
+)
+async def list_tickers(
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[TickerListData]:
+    stmt = (
+        select(Ticker)
+        .where(Ticker.is_active.is_(True))
+        .order_by(Ticker.market_cap.desc().nulls_last(), Ticker.ticker.asc())
+    )
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    items = [
+        TickerLite(
+            ticker=t.ticker,
+            company_name=t.company_name,
+            company_name_kr=t.company_name_kr,
+            sector=t.sector,
+        )
+        for t in rows
+    ]
+    return ApiResponse(data=TickerListData(count=len(items), items=items))
+
+
+# ---------------------------------------------------------------------------
+# 자동완성 검색 — 데이터 규모 커지면 (수천+) 사용
+# ---------------------------------------------------------------------------
+
+
+class TickerSearchItem(BaseModel):
+    ticker: str
+    company_name: str
+    company_name_kr: str | None
+    sector: str | None
+    market_cap: int | None
+
+
+class TickerSearchData(BaseModel):
+    query: str
+    count: int
+    items: list[TickerSearchItem]
+
+
+@router.get(
+    "/search",
+    response_model=ApiResponse[TickerSearchData],
+    summary="티커/한글명/영문명 자동완성 검색",
+)
+async def search_tickers(
+    q: str = Query(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="검색어 (티커 'AAPL' / 한글명 '애플' / 영문명 'Apple' 모두 가능)",
+    ),
+    limit: int = Query(10, ge=1, le=50, description="최대 반환 개수"),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[TickerSearchData]:
+    q_stripped = q.strip()
+    q_upper = q_stripped.upper()
+    prefix = f"{q_stripped}%"
+    substring = f"%{q_stripped}%"
+
+    # 랭킹: 작을수록 위로 (0 = ticker 완전일치, 4 = 어디든 substring)
+    rank = case(
+        (Ticker.ticker == q_upper, 0),
+        (Ticker.ticker.ilike(prefix), 1),
+        (
+            or_(
+                Ticker.company_name_kr.ilike(prefix),
+                Ticker.company_name.ilike(prefix),
+            ),
+            2,
+        ),
+        (Ticker.ticker.ilike(substring), 3),
+        else_=4,
+    ).label("rank")
+
+    stmt = (
+        select(Ticker, rank)
+        .where(
+            Ticker.is_active.is_(True),
+            or_(
+                Ticker.ticker.ilike(substring),
+                Ticker.company_name.ilike(substring),
+                Ticker.company_name_kr.ilike(substring),
+            ),
+        )
+        .order_by(rank.asc(), Ticker.market_cap.desc().nulls_last())
+        .limit(limit)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    items = [
+        TickerSearchItem(
+            ticker=t.ticker,
+            company_name=t.company_name,
+            company_name_kr=t.company_name_kr,
+            sector=t.sector,
+            market_cap=t.market_cap,
+        )
+        for t, _ in rows
+    ]
+
+    return ApiResponse(
+        data=TickerSearchData(query=q_stripped, count=len(items), items=items)
     )
