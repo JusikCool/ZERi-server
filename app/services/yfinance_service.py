@@ -82,3 +82,52 @@ def _fetch_latest_sync(tickers: list[str]) -> list[dict[str, Any]]:
 async def fetch_latest_prices(tickers: list[str]) -> list[dict[str, Any]]:
     """비동기 wrapper. 이벤트 루프 막지 않도록 별도 스레드에서 yfinance 호출."""
     return await asyncio.to_thread(_fetch_latest_sync, tickers)
+
+
+# ---------------------------------------------------------------------------
+# 종목 메타데이터 (시가총액·통화 등) — 매일 변하므로 sync 라우트에서 사용
+# ---------------------------------------------------------------------------
+
+
+def _fetch_info_sync(symbol: str) -> dict[str, Any] | None:
+    """단일 종목 메타데이터. 실패하면 None."""
+    try:
+        info = yf.Ticker(symbol).info or {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("info fetch raised for %s: %s", symbol, e)
+        return None
+
+    # invalid 종목은 info dict가 비거나 가격이 없음
+    if not info or info.get("regularMarketPrice") is None:
+        return None
+
+    return {
+        "long_name": info.get("longName") or info.get("shortName"),
+        "market_cap": info.get("marketCap"),
+        "currency": info.get("currency") or "USD",
+        "sector": info.get("sector"),
+        "exchange": info.get("exchange"),
+    }
+
+
+async def fetch_ticker_info(symbol: str) -> dict[str, Any] | None:
+    """단일 종목 메타데이터 — 비동기 wrapper."""
+    return await asyncio.to_thread(_fetch_info_sync, symbol)
+
+
+async def fetch_many_ticker_info(
+    symbols: list[str], concurrency: int = 8
+) -> dict[str, dict[str, Any]]:
+    """병렬 메타데이터 조회. 실패 종목은 결과 dict에서 제외 (호출자에서 diff로 검출)."""
+    if not symbols:
+        return {}
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _bounded(s: str) -> tuple[str, dict[str, Any] | None]:
+        async with sem:
+            info = await asyncio.to_thread(_fetch_info_sync, s)
+            return (s, info)
+
+    results = await asyncio.gather(*[_bounded(s) for s in symbols])
+    return {s: info for (s, info) in results if info is not None}
