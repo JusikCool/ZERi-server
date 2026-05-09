@@ -1,17 +1,25 @@
-"""GET /v1/prices/latest
+"""GET /v1/prices/{target}
 
-50종목 시드의 가장 최근 거래일 OHLCV를 yfinance에서 라이브로 끌어와서 반환.
-DB 저장 안 함 — 캐시도 안 걸려있어서 호출당 yfinance HTTP 요청 1번 발생.
+`target=all` 이면 tickers 테이블에서 `is_active=true` 종목 전체를 yfinance에서 라이브 조회.
+구체적인 티커면 그 한 종목만. tickers 테이블에 없으면 404 TICKER_NOT_FOUND.
+응답 후 (ticker, trade_date) PK로 prices 테이블에 upsert — 같은 거래일은 덮어씀.
 """
 
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.pipelines.tickers.seed import SEED_TICKERS, SEED_TICKER_SYMBOLS
+from app.api.deps import get_db
+from app.core.error_codes import ErrorCode
+from app.core.exceptions import AppException
+from app.db.models import Price, Ticker
 from app.schemas.common import ApiResponse
 from app.services.yfinance_service import fetch_latest_prices
 
@@ -38,28 +46,81 @@ class LatestPricesData(BaseModel):
     items: list[LatestPriceItem]
 
 
-# 시드 dict for sector / company_name_kr 룩업 (응답 보강용)
-_SEED_META: dict[str, tuple[str, str]] = {
-    t: (kr, sector) for (t, _en, kr, sector) in SEED_TICKERS
-}
+async def _get_active_tickers(session: AsyncSession) -> dict[str, Ticker]:
+    """tickers 테이블에서 `is_active=true` 전체 조회 → {ticker: Ticker} 딕셔너리."""
+    result = await session.execute(
+        select(Ticker).where(Ticker.is_active.is_(True))
+    )
+    return {t.ticker: t for t in result.scalars().all()}
+
+
+async def _upsert_prices(
+    session: AsyncSession, raw: list[dict[str, Any]]
+) -> None:
+    """yfinance OHLCV → prices 테이블 upsert. PK (trade_date, ticker)."""
+    if not raw:
+        return
+    payloads = [
+        {
+            "ticker": r["ticker"],
+            "trade_date": r["trade_date"],
+            "open_price": r["open"],
+            "high_price": r["high"],
+            "low_price": r["low"],
+            "close_price": r["close"],
+            "volume": r["volume"],
+        }
+        for r in raw
+    ]
+    stmt = pg_insert(Price).values(payloads)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["trade_date", "ticker"],
+        set_={
+            "open_price": stmt.excluded.open_price,
+            "high_price": stmt.excluded.high_price,
+            "low_price": stmt.excluded.low_price,
+            "close_price": stmt.excluded.close_price,
+            "volume": stmt.excluded.volume,
+        },
+    )
+    await session.execute(stmt)
+    await session.commit()
 
 
 @router.get(
-    "/latest",
+    "/{target}",
     response_model=ApiResponse[LatestPricesData],
-    summary="시드 50종목의 최신 가격",
+    summary="실시간 가격 — target=all 또는 단일 ticker (tickers 테이블 기준)",
 )
-async def get_latest_prices() -> ApiResponse[LatestPricesData]:
-    raw = await fetch_latest_prices(SEED_TICKER_SYMBOLS)
+async def get_prices(
+    target: str,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[LatestPricesData]:
+    target_upper = target.upper()
+
+    meta = await _get_active_tickers(session)
+
+    if target_upper == "ALL":
+        symbols = sorted(meta.keys())
+    else:
+        if target_upper not in meta:
+            raise AppException(
+                ErrorCode.TICKER_NOT_FOUND,
+                details={"ticker": target_upper},
+            )
+        symbols = [target_upper]
+
+    raw = await fetch_latest_prices(symbols)
+    await _upsert_prices(session, raw)
 
     items: list[LatestPriceItem] = []
     for r in raw:
-        kr, sector = _SEED_META.get(r["ticker"], (None, None))
+        t = meta.get(r["ticker"])
         items.append(
             LatestPriceItem(
                 ticker=r["ticker"],
-                company_name_kr=kr,
-                sector=sector,
+                company_name_kr=t.company_name_kr if t else None,
+                sector=t.sector if t else None,
                 trade_date=r["trade_date"],
                 open=r["open"],
                 high=r["high"],
@@ -70,14 +131,15 @@ async def get_latest_prices() -> ApiResponse[LatestPricesData]:
         )
 
     fetched_set = {i.ticker for i in items}
-    missing = [t for t in SEED_TICKER_SYMBOLS if t not in fetched_set]
+    missing = [s for s in symbols if s not in fetched_set]
     as_of = max((i.trade_date for i in items), default=None)
 
-    data = LatestPricesData(
-        as_of=as_of,
-        requested=len(SEED_TICKER_SYMBOLS),
-        fetched=len(items),
-        missing=missing,
-        items=items,
+    return ApiResponse(
+        data=LatestPricesData(
+            as_of=as_of,
+            requested=len(symbols),
+            fetched=len(items),
+            missing=missing,
+            items=items,
+        )
     )
-    return ApiResponse(data=data)
