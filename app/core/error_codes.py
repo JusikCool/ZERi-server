@@ -7,6 +7,7 @@ class ErrorCode(str, Enum):
     TOKEN_EXPIRED = "TOKEN_EXPIRED"
     EMAIL_DUPLICATE = "EMAIL_DUPLICATE"
     TICKER_NOT_FOUND = "TICKER_NOT_FOUND"
+    MACRO_NOT_FOUND = "MACRO_NOT_FOUND"
     PREDICTION_NOT_READY = "PREDICTION_NOT_READY"
     WATCHLIST_LIMIT_EXCEEDED = "WATCHLIST_LIMIT_EXCEEDED"
     WATCHLIST_DUPLICATE = "WATCHLIST_DUPLICATE"
@@ -21,6 +22,7 @@ ERROR_HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.TOKEN_EXPIRED: 401,
     ErrorCode.EMAIL_DUPLICATE: 409,
     ErrorCode.TICKER_NOT_FOUND: 404,
+    ErrorCode.MACRO_NOT_FOUND: 404,
     ErrorCode.PREDICTION_NOT_READY: 503,
     ErrorCode.WATCHLIST_LIMIT_EXCEEDED: 422,
     ErrorCode.WATCHLIST_DUPLICATE: 409,
@@ -36,6 +38,7 @@ DEFAULT_ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.TOKEN_EXPIRED: "토큰이 만료되었습니다.",
     ErrorCode.EMAIL_DUPLICATE: "이미 사용 중인 이메일입니다.",
     ErrorCode.TICKER_NOT_FOUND: "해당 종목을 찾을 수 없습니다.",
+    ErrorCode.MACRO_NOT_FOUND: "해당 거시지표를 찾을 수 없습니다.",
     ErrorCode.PREDICTION_NOT_READY: "예측 데이터 준비 중입니다.",
     ErrorCode.WATCHLIST_LIMIT_EXCEEDED: "워치리스트는 최대 5개까지 등록 가능합니다.",
     ErrorCode.WATCHLIST_DUPLICATE: "이미 워치리스트에 추가된 종목입니다.",

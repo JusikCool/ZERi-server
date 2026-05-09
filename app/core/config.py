@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    fred_api_key: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
