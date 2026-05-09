@@ -1,0 +1,457 @@
+# BEFORE — API
+
+### 향후 계속 업데이트 예정
+
+리스크 우선 미국주식 리뷰 API. 협업·프론트엔드용 명세 스냅샷.
+본 문서와 다르면 Swagger 우선. 본 문서가 오래된 거.
+
+
+## 공통 규약
+
+
+### 응답 envelope
+
+성공:
+
+```json
+{
+  "data": { ... },
+  "meta": {
+    "request_id": "req_xxxx",
+    "ts": "2026-05-10T12:34:56Z",
+    "next_cursor": null
+  }
+}
+```
+
+에러:
+
+```json
+{
+  "error": {
+    "code": "TICKER_NOT_FOUND",
+    "message": "해당 종목을 찾을 수 없습니다.",
+    "details": { "ticker": "XXXX" }
+  },
+  "meta": { "request_id": "...", "ts": "...", "next_cursor": null }
+}
+```
+
+클라이언트는 data 또는 error 키 존재로 분기. HTTP status는 보조 신호.
+
+
+### 에러 코드
+
+| code | HTTP | 의미 |
+| :-- | :--: | :-- |
+| INVALID_PARAMETER | 400 | 잘못된 파라미터 |
+| UNAUTHORIZED | 401 | 인증 필요 |
+| TOKEN_EXPIRED | 401 | 토큰 만료 |
+| EMAIL_DUPLICATE | 409 | 이메일 중복 |
+| TICKER_NOT_FOUND | 404 | 종목 없음 |
+| MACRO_NOT_FOUND | 404 | 거시지표 없음 |
+| PREDICTION_NOT_READY | 503 | 예측 데이터 준비 중 |
+| WATCHLIST_LIMIT_EXCEEDED | 422 | 워치리스트 5개 초과 |
+| WATCHLIST_DUPLICATE | 409 | 워치리스트 중복 |
+| DISCLAIMER_REQUIRED | 403 | 면책 동의 필요 |
+| RATE_LIMIT_EXCEEDED | 429 | 호출 제한 |
+| INTERNAL_ERROR | 500 | 서버 내부 오류 |
+
+
+## 1. [프런트] 사용자 화면용
+
+우리 DB만 조회. 외부 API 호출 없음. 응답 시간 일정.
+
+종목 자동완성·검색, 거시지표 시계열(차트) 용도.
+
+
+### GET /v1/tickers
+
+활성 종목(현재 50종목) 전체. 시가총액 내림차순.
+
+앱 진입 시 1회 fetch 후 메모리 보관, 입력 onChange는 클라이언트 JS로 필터링하는 것을 권장. 50종목 약 5KB. API 호출 1회로 영구 검색 가능.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "count": 50,
+    "items": [
+      { "ticker": "NVDA",  "company_name": "NVIDIA Corporation",    "company_name_kr": "엔비디아",      "sector": "메가캡 테크" },
+      { "ticker": "GOOGL", "company_name": "Alphabet Inc.",         "company_name_kr": "알파벳",        "sector": "메가캡 테크" },
+      { "ticker": "AAPL",  "company_name": "Apple Inc.",            "company_name_kr": "애플",          "sector": "메가캡 테크" },
+      { "ticker": "MSFT",  "company_name": "Microsoft Corporation", "company_name_kr": "마이크로소프트", "sector": "메가캡 테크" }
+    ]
+  }
+}
+```
+
+프런트 사용 예시:
+
+```javascript
+// 앱 마운트 시 단 1회
+const all = (await fetch('/v1/tickers').then(r => r.json())).data.items;
+
+// 입력 onChange — 디바운스 불필요 (클라 필터)
+function search(q) {
+  const lo = q.toLowerCase();
+  return all.filter(t =>
+    t.ticker.toLowerCase().includes(lo) ||
+    t.company_name.toLowerCase().includes(lo) ||
+    (t.company_name_kr && t.company_name_kr.includes(q))
+  );
+}
+```
+
+
+### GET /v1/tickers/search
+
+서버 사이드 검색. 종목 수가 수천 단위로 커질 때 사용. 현재 50종목 환경에서는 위 GET /v1/tickers + 클라이언트 필터가 효율적이라 호출 안 권장.
+
+Query:
+
+| 이름 | 타입 | 필수 | 기본 | 제약 | 설명 |
+| :-- | :-- | :--: | :--: | :-- | :-- |
+| q | string | 필수 | — | 1~50자 | 검색어 (한글·영문·티커) |
+| limit | int |  | 10 | 1~50 | 최대 반환 개수 |
+
+랭킹 순서:
+
+1. ticker 완전일치 (AAPL → AAPL 1위)
+2. ticker prefix
+3. 한글/영문 이름 prefix
+4. ticker substring
+5. 어디든 substring
+
+동순위 내에서는 시가총액 큰 순.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "query": "애플",
+    "count": 1,
+    "items": [
+      {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "company_name_kr": "애플",
+        "sector": "메가캡 테크",
+        "market_cap": 4308095467520
+      }
+    ]
+  }
+}
+```
+
+curl 예시:
+
+```bash
+curl 'http://localhost:8000/v1/tickers/search?q=애플&limit=5'
+curl 'http://localhost:8000/v1/tickers/search?q=apple'
+curl 'http://localhost:8000/v1/tickers/search?q=AAPL'
+```
+
+
+### GET /v1/macro/{code}
+
+DB에 적재된 단일 시리즈 조회. 외부 API 호출 없음.
+
+호출자는 두 종류. 프런트는 차트 그리기에 사용(예: 최근 1년 CPI 추이). 모델은 feature pipeline 입력으로 사용(학습/추론 시 prices와 조인).
+
+Path:
+
+| 이름 | 설명 |
+| :-- | :-- |
+| code | 시리즈 코드. 시드 12개 중 하나. |
+
+시드 12 시리즈:
+
+| 코드 | 한글명 | 주기 | 모델에서의 의미 |
+| :-- | :-- | :--: | :-- |
+| FEDFUNDS | 연방기금금리 | 월 | 통화정책 |
+| UNRATE | 실업률 | 월 | 고용 시장 |
+| DTWEXBGS | 광역 달러지수 | 일 | 달러 강도 |
+| CPIAUCSL | CPI | 월 | 인플레이션 |
+| PCEPI | PCE 물가지수 | 월 | 연준 선호 인플레 지표 |
+| GDP | GDP | 분기 | 경제 성장 |
+| M2SL | M2 통화량 | 월 | 유동성 |
+| GS10 | 10년 국채금리 | 월 | 장기 무위험 수익률 |
+| T10Y2Y | 10Y-2Y 스프레드 | 일 | 침체 선행지표 |
+| PAYEMS | 비농업 고용 | 월 | 총고용 규모 |
+| CSUSHPISA | 케이스-쉴러 주택가격 | 월 | 부동산 시장 |
+| INDPRO | 산업생산지수 | 월 | 실물 경기 |
+
+Query:
+
+| 이름 | 타입 | 기본 | 설명 |
+| :-- | :-- | :-- | :-- |
+| start | date (YYYY-MM-DD) | 없음 | 시작일 (포함) |
+| end | date (YYYY-MM-DD) | 없음 | 종료일 (포함) |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "indicator_code": "T10Y2Y",
+    "name_kr": "10Y-2Y 스프레드",
+    "frequency": "daily",
+    "count": 6,
+    "points": [
+      { "trade_date": "2026-05-01", "value": "0.510000" },
+      { "trade_date": "2026-05-04", "value": "0.500000" },
+      { "trade_date": "2026-05-05", "value": "0.500000" },
+      { "trade_date": "2026-05-06", "value": "0.490000" },
+      { "trade_date": "2026-05-07", "value": "0.490000" },
+      { "trade_date": "2026-05-08", "value": "0.480000" }
+    ]
+  }
+}
+```
+
+value는 Numeric(15,6) 정밀도 보존을 위해 문자열로 직렬화됨. 클라이언트에서 Number(p.value) 변환 필요.
+
+Response 404:
+
+```json
+{
+  "error": {
+    "code": "MACRO_NOT_FOUND",
+    "message": "해당 거시지표를 찾을 수 없습니다.",
+    "details": { "indicator_code": "INVALID" }
+  }
+}
+```
+
+curl 예시:
+
+```bash
+curl 'http://localhost:8000/v1/macro/T10Y2Y?start=2026-05-01'
+curl 'http://localhost:8000/v1/macro/CPIAUCSL?start=2025-01-01&end=2025-12-31'
+```
+
+
+## 2. [수집] 운영자/cron 전용
+
+일반 클라이언트가 호출하지 않음. 일일 스케줄러(cron, GitHub Actions, Cloud Scheduler) 또는 운영자 수동 호출용. 외부 API(yfinance, FRED) → 우리 DB로 데이터 적재가 본질적 역할.
+
+
+### POST /v1/tickers/sync/{target}
+
+yfinance에서 종목 메타(시가총액·통화·섹터)를 가져와 tickers 테이블에 upsert.
+
+동작:
+
+- 시드(SEED_TICKERS)에 있는 종목은 한글명·섹터를 큐레이팅 값 우선 (yfinance가 덮어쓰지 못함)
+- yfinance에서만 받는 건 market_cap, currency
+- (ticker) PK ON CONFLICT DO UPDATE — 멱등
+- updated_at 자동 갱신, created_at 보존
+
+Path:
+
+| 이름 | 설명 |
+| :-- | :-- |
+| target | all (시드 50종목) 또는 단일 티커 (예: AAPL) |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "requested": 50,
+    "synced": 50,
+    "failed": [],
+    "items": [
+      {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "company_name_kr": "애플",
+        "sector": "메가캡 테크",
+        "market_cap": 4308095467520,
+        "currency": "USD",
+        "is_active": true
+      }
+    ]
+  }
+}
+```
+
+curl 예시:
+
+```bash
+curl -X POST http://localhost:8000/v1/tickers/sync/all
+curl -X POST http://localhost:8000/v1/tickers/sync/AAPL
+```
+
+
+### GET /v1/prices/{target}
+
+yfinance에서 라이브 OHLCV를 받아 (trade_date, ticker) PK로 prices 테이블에 upsert. 응답 형태가 사용자용처럼 보이지만 본질은 수집이라 프런트는 직접 부르면 안 됨.
+
+Path:
+
+| 이름 | 설명 |
+| :-- | :-- |
+| target | all 또는 단일 티커. tickers 테이블의 is_active=true만 대상. |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "as_of": "2026-05-08",
+    "requested": 50,
+    "fetched": 50,
+    "missing": [],
+    "items": [
+      {
+        "ticker": "AAPL",
+        "company_name_kr": "애플",
+        "sector": "메가캡 테크",
+        "trade_date": "2026-05-08",
+        "open": 290.01,
+        "high": 294.76,
+        "low": 290.0,
+        "close": 293.32,
+        "volume": 52631200
+      }
+    ]
+  }
+}
+```
+
+Response 404:
+
+```json
+{
+  "error": {
+    "code": "TICKER_NOT_FOUND",
+    "message": "해당 종목을 찾을 수 없습니다.",
+    "details": { "ticker": "XXXX" }
+  }
+}
+```
+
+curl 예시:
+
+```bash
+curl http://localhost:8000/v1/prices/all
+curl http://localhost:8000/v1/prices/AAPL
+```
+
+
+### POST /v1/macro/sync/{target}
+
+FRED에서 거시지표를 받아 macro_indicators 테이블에 upsert.
+
+realtime은 FRED 기본값(today)을 사용해 발표·수정값을 자동 반영. observation_start/end로 lookback 윈도우만 좁혀 호출 비용을 최소화.
+
+Path:
+
+| 이름 | 설명 |
+| :-- | :-- |
+| target | all (시드 12 시리즈) 또는 단일 코드 (예: T10Y2Y) |
+
+Query:
+
+| 이름 | 타입 | 기본 | 제약 | 설명 |
+| :-- | :-- | :--: | :-- | :-- |
+| lookback_days | int | 30 | 1~36500 | 오늘부터 며칠 전까지 가져올지 |
+
+용도별 권장 lookback:
+
+| 용도 | lookback | 호출 빈도 |
+| :-- | :-- | :-- |
+| 일일 cron | 30 | 매일 1회 |
+| 주간 정합성 점검 | 90 | 주 1회 |
+| 백필 (전체 히스토리) | 36500 | 1회성 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "requested": 12,
+    "synced": 12,
+    "failed": [],
+    "items": [
+      {
+        "indicator_code": "T10Y2Y",
+        "name_kr": "10Y-2Y 스프레드",
+        "frequency": "daily",
+        "rows": 22,
+        "earliest": "2026-04-09",
+        "latest": "2026-05-08"
+      }
+    ]
+  }
+}
+```
+
+비고:
+
+- (indicator_code, trade_date) PK 멱등 upsert
+- asyncpg 32767 파라미터 한도 회피용 5,000행 청크 분할
+- FRED 결측치(.)는 자동 제외
+- HTTP 에러 시리즈만 failed에 포함. 빈 응답은 정상
+
+curl 예시:
+
+```bash
+# 일일 cron
+curl -X POST http://localhost:8000/v1/macro/sync/all
+
+# 단일 시리즈, 최근 7일
+curl -X POST 'http://localhost:8000/v1/macro/sync/T10Y2Y?lookback_days=7'
+
+# 전체 백필
+curl -X POST 'http://localhost:8000/v1/macro/sync/all?lookback_days=36500'
+```
+
+
+## 3. [시스템]
+
+
+### GET /health
+
+서버 라이브니스. v1 prefix 없음.
+
+Response 200:
+
+```json
+{ "status": "ok" }
+```
+
+curl 예시:
+
+```bash
+curl http://localhost:8000/health
+```
+
+
+## 환경 변수
+
+.env 파일 (gitignored). .env.example 복사 후 채우기.
+
+| 키 | 용도 | 필수 |
+| :-- | :-- | :--: |
+| ENV | dev/prod |  |
+| DATABASE_URL | PG 연결 문자열 | 필수 |
+| JWT_SECRET | 토큰 서명 (Phase 1+) | 필수 |
+| JWT_ALGORITHM | 기본 HS256 |  |
+| ACCESS_TOKEN_EXPIRES_IN | 초 단위 (3600=1h) |  |
+| REFRESH_TOKEN_EXPIRES_IN | 초 단위 (1209600=14d) |  |
+| CORS_ORIGINS | 콤마 구분 도메인 |  |
+| FRED_API_KEY | https://fredaccount.stlouisfed.org/apikey 무료 발급 | macro 사용 시 |
+
+
+## 부록
+
+- Swagger UI — http://localhost:8000/docs (단일 진실, 인터랙티브)
+- ReDoc — http://localhost:8000/redoc
+- OpenAPI JSON — http://localhost:8000/openapi.json
+- 로컬 셋업 — [README.md](README.md)
+- 엔지니어링 회고 — [ISSUES.md](ISSUES.md), [BETTER.md](BETTER.md)
