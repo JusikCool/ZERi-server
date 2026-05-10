@@ -43,7 +43,7 @@ DEFAULT_ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.TICKER_NOT_FOUND: "해당 종목을 찾을 수 없습니다.",
     ErrorCode.MACRO_NOT_FOUND: "해당 거시지표를 찾을 수 없습니다.",
     ErrorCode.PREDICTION_NOT_READY: "예측 데이터 준비 중입니다.",
-    ErrorCode.WATCHLIST_LIMIT_EXCEEDED: "워치리스트는 최대 5개까지 등록 가능합니다.",
+    ErrorCode.WATCHLIST_LIMIT_EXCEEDED: "워치리스트 등록 가능 한도를 초과했습니다.",
     ErrorCode.WATCHLIST_DUPLICATE: "이미 워치리스트에 추가된 종목입니다.",
     ErrorCode.DISCLAIMER_REQUIRED: "면책 동의가 필요합니다.",
     ErrorCode.RATE_LIMIT_EXCEEDED: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
