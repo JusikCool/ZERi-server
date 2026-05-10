@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -19,9 +18,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # 테스트 DB URL은 운영용과 다른 schema 사용. 같은 PG 인스턴스, 격리된 namespace.
-_BASE_DB_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+asyncpg://before:before@db:5432/before"
-)
+_BASE_DB_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://before:before@db:5432/before")
 
 
 def _schema_for_run() -> str:
@@ -79,9 +76,7 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_db] = lambda: db_session
     limiter.enabled = False  # 테스트 중엔 rate limit off
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             yield ac
     finally:
         app.dependency_overrides.clear()

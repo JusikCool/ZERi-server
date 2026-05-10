@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.db.models import Ticker
-from app.pipelines.tickers.seed import SEED_TICKERS, SEED_TICKER_SYMBOLS
+from app.pipelines.tickers.seed import SEED_TICKER_SYMBOLS, SEED_TICKERS
 from app.schemas.common import ApiResponse
 from app.services.yfinance_service import fetch_many_ticker_info
 
@@ -79,9 +79,7 @@ def _merge_payload(symbol: str, info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _upsert_tickers(
-    session: AsyncSession, payloads: list[dict[str, Any]]
-) -> None:
+async def _upsert_tickers(session: AsyncSession, payloads: list[dict[str, Any]]) -> None:
     if not payloads:
         return
     stmt = pg_insert(Ticker).values(payloads)
@@ -262,6 +260,4 @@ async def search_tickers(
         for t, _ in rows
     ]
 
-    return ApiResponse(
-        data=TickerSearchData(query=q_stripped, count=len(items), items=items)
-    )
+    return ApiResponse(data=TickerSearchData(query=q_stripped, count=len(items), items=items))

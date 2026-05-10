@@ -240,7 +240,128 @@ ACCESS=eyJ...
 curl -H "Authorization: Bearer $ACCESS" http://localhost:8000/v1/me
 ```
 
-엔드포인트가 `Depends(get_current_user)`를 쓰면 인증 필수, `Depends(get_optional_user)`면 토큰 있을 때만 인증 사용자로 취급.
+엔드포인트가 `Depends(get_current_user)`를 쓰면 인증 필수, `Depends(get_optional_user)`면 토큰 있을 때만 인증 사용자로 취급. **탈퇴된 사용자(`deleted_at IS NOT NULL`)는 access 토큰이 살아있어도 거절** (UNAUTHORIZED).
+
+
+### GET /v1/me
+
+현재 로그인 사용자 프로필 조회.
+
+Auth: 필수.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "user": {
+      "user_id": 7,
+      "email": "alice@example.com",
+      "name": "앨리스",
+      "created_at": "2026-05-10T12:26:58Z"
+    }
+  }
+}
+```
+
+
+### PATCH /v1/me
+
+이름 또는 비밀번호 변경 (부분 갱신). 둘 다 보내도 OK, 둘 다 없으면 거절.
+
+Auth: 필수.
+
+Request:
+
+```json
+{
+  "name": "새 이름",
+  "current_password": "현재 비밀번호",
+  "new_password": "새 비밀번호 (정책 재적용)"
+}
+```
+
+규칙:
+
+- `name`만 보내기: 이름만 변경
+- `new_password` 보내려면 `current_password` 필수
+- `new_password`는 signup 비밀번호 정책 재적용 (흔한 비번 / 이메일·이름 유사 차단)
+- **비밀번호 변경 시 해당 사용자의 모든 활성 refresh 토큰이 일괄 revoke됨** (다른 디바이스 강제 로그아웃)
+- 빈 body `{}` 보내면 400
+
+Response 200:
+
+```json
+{
+  "data": {
+    "user": { "user_id": 7, "email": "...", "name": "새 이름", "created_at": "..." }
+  }
+}
+```
+
+Response 401: `current_password` 불일치 → `INVALID_CREDENTIALS`.
+
+Response 400:
+- 빈 PATCH
+- `new_password`만 있고 `current_password` 없음
+- 비밀번호 정책 위반
+
+
+### DELETE /v1/me
+
+회원 탈퇴 (하이브리드 soft-delete).
+
+Auth: 필수.
+
+동작:
+
+1. `users.deleted_at`에 현재 시각 채움
+2. `users.email`을 `deleted_<user_id>@deleted.local`로 익명화 (재가입 가능하도록 unique 충돌 회피)
+3. `users.password_hash`를 NULL로 (재로그인 차단)
+4. 해당 사용자의 모든 활성 refresh 토큰 revoke
+5. **`analysis_history`, `disclaimer_acks` 등 자식 테이블은 보존** (감사·컴플라이언스 증빙)
+
+이후 같은 access 토큰으로 어떤 보호 API를 호출해도 401.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "deleted": true,
+    "deleted_at": "2026-05-10T13:00:00Z"
+  }
+}
+```
+
+
+### POST /v1/me/disclaimer-ack
+
+면책 동의 기록. 회원가입 시점의 동의는 `signup`에서 자동 처리되고, 이 엔드포인트는 **버전 업데이트 / 만료 / 재동의 요구 시 호출**.
+
+Auth: 필수.
+
+Request:
+
+```json
+{ "disclaimer_code": "MAIN_V1" }
+```
+
+`disclaimer_code` 생략 시 기본값 `MAIN_V1`. IP는 서버에서 자동 추출(서버 사이드 증빙).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "ack_id": 12,
+    "disclaimer_code": "MAIN_V1",
+    "acknowledged_at": "2026-05-10T13:05:00Z"
+  }
+}
+```
+
+매 호출마다 `disclaimer_acks`에 새 행 INSERT — 시점별 증빙 보존.
 
 
 ## 1. [프런트] 사용자 화면용

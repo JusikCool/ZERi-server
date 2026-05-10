@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -90,7 +90,7 @@ async def _issue_token_pair(
 
 async def _invalidate_family(session: AsyncSession, family_id: str) -> int:
     """탈취 의심: 이 family의 모든 활성 토큰을 한 번에 revoke. 영향 row 수 반환."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await session.execute(
         update(RefreshToken)
         .where(RefreshToken.family_id == family_id, RefreshToken.revoked_at.is_(None))
@@ -205,11 +205,11 @@ async def refresh_tokens(session: AsyncSession, refresh_token: str) -> RefreshDa
         )
         raise AppException(ErrorCode.UNAUTHORIZED)
 
-    if db_token.expires_at <= datetime.now(timezone.utc):
+    if db_token.expires_at <= datetime.now(UTC):
         raise AppException(ErrorCode.TOKEN_EXPIRED)
 
     # 정상 회전: 옛 jti revoke + 같은 family로 새 페어 발급
-    db_token.revoked_at = datetime.now(timezone.utc)
+    db_token.revoked_at = datetime.now(UTC)
     tokens = await _issue_token_pair(session, user_id, family_id=db_token.family_id)
     await session.commit()
 
@@ -231,7 +231,7 @@ async def logout(session: AsyncSession, refresh_token: str) -> bool:
     if db_token is None:
         return True
     if db_token.revoked_at is None:
-        db_token.revoked_at = datetime.now(timezone.utc)
+        db_token.revoked_at = datetime.now(UTC)
         await session.commit()
     return True
 
@@ -247,8 +247,6 @@ async def sweep_expired_refresh_tokens(session: AsyncSession, grace_days: int = 
     from sqlalchemy import delete, text
 
     cutoff = text(f"now() - interval '{int(grace_days)} days'")
-    result = await session.execute(
-        delete(RefreshToken).where(RefreshToken.expires_at < cutoff)
-    )
+    result = await session.execute(delete(RefreshToken).where(RefreshToken.expires_at < cutoff))
     await session.commit()
     return result.rowcount or 0

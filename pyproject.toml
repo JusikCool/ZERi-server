@@ -33,9 +33,19 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic 자동 생성 파일은 우리가 통제할 수 없음 — 제외.
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    # FastAPI에서 Depends/Query를 기본값으로 두는 건 공식 권장 패턴.
+    "B008",
+    # str+Enum이 우리 envelope에서 더 명시적. StrEnum 강제 안 함.
+    "UP042",
+    # Pydantic Generic[T]가 PEP 695보다 더 잘 지원됨.
+    "UP046",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

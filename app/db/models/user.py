@@ -22,3 +22,7 @@ class User(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    # 하이브리드 탈퇴: 채워지면 비활성. email은 익명화하지만 user_id/analysis_history는 보존.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True, index=True
+    )

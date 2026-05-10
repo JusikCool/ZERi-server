@@ -11,7 +11,8 @@
 - ✅ prices — yfinance OHLCV 적재
 - ✅ macro — FRED 12개 시리즈 적재 + 시계열 조회
 - ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
-- ⏳ /me, /me/watchlist (다음 단계)
+- ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의
+- ⏳ /me/watchlist (다음 단계)
 - ⏳ risk, history, models (B 담당)
 
 ## 스택
@@ -43,6 +44,7 @@ app/
 │   └── models/             # ORM 모델 (테이블당 한 파일)
 ├── services/
 │   ├── auth_service.py     # 인증 비즈니스 로직 (rotation, family invalidation, sweep)
+│   ├── me_service.py       # 사용자 본인 (조회/수정/탈퇴/disclaimer)
 │   ├── fred_service.py     # FRED 어댑터
 │   └── yfinance_service.py # yfinance 어댑터
 ├── pipelines/              # 시드(SEED_TICKERS, MACRO_INDICATORS)

@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.core.request_context import set_request_id
 from app.schemas.common import ApiError, ApiErrorResponse, Meta
 
 settings = get_settings()
@@ -70,11 +71,20 @@ app.add_middleware(
 async def request_id_middleware(request: Request, call_next):
     """Attach a request_id to every request/response. Spec §0.2 envelope.meta.request_id.
 
+    ContextVar에 set → schemas.common.Meta가 default_factory로 자동 주입.
+    이렇게 해야 성공 응답(라우터가 직접 만드는 ApiResponse)에도 request_id가 채워짐.
+
     auth 응답은 추가로 Cache-Control: no-store — 토큰이 프록시/브라우저 캐시에 남는 것 방지.
     """
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid.uuid4().hex[:24]}"
     request.state.request_id = request_id
-    response = await call_next(request)
+    set_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        # task 종료 후 다른 task로 누수 방지 — 이 부분은 ContextVar가 task별 격리되니
+        # 실제로는 불필요하지만, 명시적으로 cleanup하는 게 코드 의도가 명확.
+        set_request_id(None)
     response.headers["X-Request-Id"] = request_id
     if request.url.path.startswith("/v1/auth/"):
         response.headers["Cache-Control"] = "no-store"

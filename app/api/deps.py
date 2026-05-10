@@ -45,7 +45,8 @@ def _decode_access(token: str) -> dict:
 
 async def _resolve_user(session: AsyncSession, user_id: int) -> User:
     user = await session.get(User, user_id)
-    if user is None:
+    if user is None or user.deleted_at is not None:
+        # 삭제된 계정의 옛 access 토큰은 즉시 거절
         raise AppException(ErrorCode.UNAUTHORIZED)
     return user
 
@@ -76,6 +77,7 @@ async def get_optional_user(
         # 잘못된/만료된 토큰이라도 optional이므로 익명 처리
         return None
     user = await session.get(User, int(payload["sub"]))
-    if user is not None:
-        request.state.user_id = user.user_id
+    if user is None or user.deleted_at is not None:
+        return None
+    request.state.user_id = user.user_id
     return user
