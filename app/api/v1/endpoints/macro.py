@@ -65,9 +65,7 @@ class MacroSeriesData(BaseModel):
 _UPSERT_CHUNK = 5000
 
 
-async def _upsert_observations(
-    session: AsyncSession, code: str, observations: list[dict]
-) -> None:
+async def _upsert_observations(session: AsyncSession, code: str, observations: list[dict]) -> None:
     if not observations:
         return
     payloads = [
@@ -96,7 +94,11 @@ async def sync_macro(
         30,
         ge=1,
         le=36500,
-        description="오늘부터 며칠 전까지의 관측치를 가져올지. realtime은 항상 today (FRED 기본값) — 발표/수정 자동 반영. 전체 백필은 큰 값 (예: 36500).",
+        description=(
+            "오늘부터 며칠 전까지의 관측치를 가져올지. "
+            "realtime은 항상 today (FRED 기본값) — 발표/수정 자동 반영. "
+            "전체 백필은 큰 값 (예: 36500)."
+        ),
     ),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[MacroSyncData]:
