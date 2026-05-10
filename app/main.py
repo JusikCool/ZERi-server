@@ -5,12 +5,14 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.schemas.common import ApiError, ApiErrorResponse, Meta
 
 settings = get_settings()
@@ -18,7 +20,24 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup hooks (cache warmup, model registry load, etc.) go here.
+    # Startup: 만료된 refresh 토큰 sweep — DB 누적 방지.
+    # 주: 운영에서는 cron/별도 잡으로 옮기는 게 정석. 단일 인스턴스 dev에선 startup 1회로 충분.
+    try:
+        from app.db.session import SessionLocal
+        from app.services.auth_service import sweep_expired_refresh_tokens
+
+        async with SessionLocal() as session:
+            removed = await sweep_expired_refresh_tokens(session)
+        if removed:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "startup: swept %d expired refresh tokens", removed
+            )
+    except Exception:  # noqa: BLE001 — startup은 sweep 실패로 죽이면 안 됨
+        import logging
+
+        logging.getLogger(__name__).exception("startup: refresh token sweep failed")
     yield
     # Shutdown hooks.
 
@@ -31,6 +50,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Rate limiter 등록 — 라우트의 @limiter.limit 데코레이터로 적용.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # ---- middleware ---------------------------------------------------------
 
@@ -45,11 +68,17 @@ app.add_middleware(
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    """Attach a request_id to every request/response. Spec §0.2 envelope.meta.request_id."""
+    """Attach a request_id to every request/response. Spec §0.2 envelope.meta.request_id.
+
+    auth 응답은 추가로 Cache-Control: no-store — 토큰이 프록시/브라우저 캐시에 남는 것 방지.
+    """
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid.uuid4().hex[:24]}"
     request.state.request_id = request_id
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
+    if request.url.path.startswith("/v1/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 

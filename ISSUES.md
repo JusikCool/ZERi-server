@@ -225,13 +225,98 @@ for obs in observations:
 
 ---
 
+## 5. `EmailStr` 사용 시 `email-validator` 누락 — signup 500
+
+**상황**
+`POST /v1/auth/signup` 첫 호출에 500. 컨테이너 로그를 확인하니 `pydantic` 내부에서 import 에러.
+
+**에러**
+```
+ImportError: email-validator is not installed, run `pip install 'pydantic[email]'`
+```
+
+**원인**
+`pydantic`은 기본 설치만으로는 `EmailStr` 유효성 검증 불가능. `pydantic[email]` extras에 묶여있는 `email-validator` + `dnspython`이 별도 필요. `pyproject.toml`에 `pydantic>=2.9`만 적혀있어서 누락됐음.
+
+**해결**
+- `pyproject.toml`: `pydantic>=2.9` → `pydantic[email]>=2.9` (영구)
+- 컨테이너에 즉시 반영: `docker compose exec api uv pip install email-validator` (재빌드 전까지)
+- API 컨테이너 restart로 새 패키지 인식
+
+**배운 점**
+Pydantic의 extras 의존성은 사용처가 정확하지 않으면 빌드 시점에 못 잡힘. 라이브러리 docstring("requires `pydantic[email]`")을 따라가서 의존성도 같이 갱신하는 습관 필요. 또한 `--build` 없는 `up`은 의존성 변경을 반영 못 한다는 사실을 다시 한 번 확인.
+
+---
+
+## 6. RefreshToken 컬럼 추가 마이그레이션 — 기존 행 NOT NULL 충돌
+
+**상황**
+`refresh_tokens.family_id` 컬럼을 NOT NULL로 추가하는 마이그레이션을 alembic autogenerate로 생성. 기존 토큰 행이 3개 있는 상태에서 `alembic upgrade head` 실행.
+
+**문제 시나리오**
+autogenerate 결과:
+```python
+op.add_column('refresh_tokens', sa.Column('family_id', sa.String(64), nullable=False))
+```
+이대로 적용하면 PostgreSQL이 기존 행에 NULL을 채울 수 없어서 마이그레이션 자체가 실패하거나, default 없이 NOT NULL을 강제해 정합성 깨짐.
+
+**해결**
+3단계 마이그레이션으로 분리:
+
+```python
+def upgrade():
+    op.add_column('refresh_tokens', sa.Column('family_id', sa.String(64), nullable=True))
+    op.execute("UPDATE refresh_tokens SET family_id = jti WHERE family_id IS NULL")
+    op.alter_column('refresh_tokens', 'family_id', nullable=False)
+    op.create_index(op.f('ix_refresh_tokens_family_id'), 'refresh_tokens', ['family_id'])
+```
+
+기존 토큰은 자기 jti를 family로 설정 — 어차피 다음 회전에서 새 family를 받게 되므로 기능적으로 무해.
+
+**배운 점**
+alembic autogenerate는 **이미 데이터가 있는 테이블에 NOT NULL 컬럼을 추가**할 때 안전하지 않음. 모든 컬럼 추가는 다음 패턴으로 점검:
+1. 빈 테이블인가? → autogenerate 그대로 OK
+2. 데이터가 있고 default 값으로 충분한가? → `server_default` 추가 후 그대로 OK
+3. 데이터가 있고 의미 있는 백필이 필요한가? → 위처럼 nullable=True → 백필 → NOT NULL 3단 분리
+
+운영 DB라면 백필 단계에서 락 시간을 고려해 청크 분할도 추가.
+
+---
+
+## 7. slowapi `headers_enabled=True` — 함수 시그니처 강제 변경
+
+**상황**
+rate limit 도입 후 모든 limited 엔드포인트에서 500.
+
+**에러**
+```
+Exception: parameter `response` must be an instance of starlette.responses.Response
+```
+
+**원인**
+`Limiter(headers_enabled=True)`는 응답에 `X-RateLimit-Limit/Remaining/Reset` 헤더를 자동으로 부착해주는데, 그러려면 데코레이터가 응답 객체에 직접 접근해야 함. slowapi 내부 구현은 함수 시그니처에 `response: Response` 파라미터를 강제로 요구.
+
+우리 라우터들은 `ApiResponse[T]`를 반환하는 함수 본문 모양이라 `response: Response`를 인자로 받지 않음. 따라서 slowapi가 시그니처 검사에서 실패.
+
+**해결**
+`headers_enabled=False`(기본값)로 둠. 응답 헤더를 통한 제한 정보 노출은 포기하되, 우리 자체의 envelope에 `RATE_LIMIT_EXCEEDED` 코드로 충분히 통신.
+
+**배운 점**
+서드파티 데코레이터가 함수 시그니처에 침습적으로 영향을 미치는지 사전에 확인. "헤더 자동 부착" 같은 편의 기능은 종종 시그니처 계약을 강제하므로, 모든 라우터에 일관된 시그니처를 강제할지 vs 기능을 끌지 트레이드오프.
+
+---
+
 ## 부채로 명시 기록(아직 미해결)
 
 향후 PR로 분리 처리 예정인 항목들:
 
-- **`request_id` 미들웨어 미연결**: 모든 응답의 `meta.request_id`가 `null`로 떨어짐. 트레이스 ID 전파 미들웨어 1개 추가 필요.
-- **테스트 미작성**: 라우트별 happy path + 404 케이스 최소 1개씩이라도 작성 안 함. `httpx.AsyncClient` + pytest-asyncio 패턴으로 도입 필요.
+- ~~**`request_id` 미들웨어 미연결**~~ — Phase 1에서 추가 (resolved)
+- ~~**테스트 미작성**~~ — auth 흐름은 12개 시나리오 추가 (tickers/prices/macro는 미커버)
 - **외부 API request-path 호출**: 위 항목 #3.
 - **모델 단위 테스트**: 리스크 모델 도입 전 `model_quality` 테이블에 메트릭 기록 + reproducible 백테스트 픽스처 셋업 필요.
+- **rate limit storage 인메모리**: 단일 인스턴스 한정. 멀티 인스턴스 진입 시 Redis로 교체 필요.
+- **refresh token sweep을 startup hook**: 단일 인스턴스에선 OK지만 운영 진입 시 별도 cron(GitHub Actions / Cloud Scheduler)으로 분리.
+- **JWT HS256 → RS256**: 명세 §11. 마이크로서비스 분리/공개 검증자 진입 시점에 키 로테이션과 함께 마이그레이션.
+- **감사 로그 부재**: 로그인 성공/실패, 토큰 발급/회수 이벤트가 구조화 로그로만 남고 별도 `audit_logs` 테이블 없음.
 
 부채를 인지하고 명시하는 것 자체가 엔지니어링 성숙도의 일부. "다 깔끔하다"는 말보다 정직한 부채 목록이 더 신뢰 가능.

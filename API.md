@@ -44,9 +44,10 @@
 
 | code | HTTP | 의미 |
 | :-- | :--: | :-- |
-| INVALID_PARAMETER | 400 | 잘못된 파라미터 |
-| UNAUTHORIZED | 401 | 인증 필요 |
+| INVALID_PARAMETER | 400 | 잘못된 파라미터 (비밀번호 정책 위반 포함) |
+| UNAUTHORIZED | 401 | 인증 필요 / 토큰 위조 / refresh 재사용 감지 |
 | TOKEN_EXPIRED | 401 | 토큰 만료 |
+| INVALID_CREDENTIALS | 401 | 이메일/비밀번호 불일치 (로그인) |
 | EMAIL_DUPLICATE | 409 | 이메일 중복 |
 | TICKER_NOT_FOUND | 404 | 종목 없음 |
 | MACRO_NOT_FOUND | 404 | 거시지표 없음 |
@@ -56,6 +57,190 @@
 | DISCLAIMER_REQUIRED | 403 | 면책 동의 필요 |
 | RATE_LIMIT_EXCEEDED | 429 | 호출 제한 |
 | INTERNAL_ERROR | 500 | 서버 내부 오류 |
+
+`UNAUTHORIZED` vs `INVALID_CREDENTIALS` 분기 가이드:
+
+- `UNAUTHORIZED`: 토큰이 잘못됨/만료됨/refresh 토큰 재사용 감지 → 클라가 재로그인 유도
+- `TOKEN_EXPIRED`: 토큰 만료만 명시적으로 → access면 refresh 호출, refresh면 재로그인
+- `INVALID_CREDENTIALS`: 로그인 자체 실패 → "이메일/비밀번호 다시 확인" 메시지
+- 이메일 존재 여부 leak 방지를 위해 "이메일 없음"과 "비밀번호 틀림"은 같은 코드/메시지/응답 시간으로 통일
+
+
+## 0. [인증]
+
+JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + 재사용 감지 + family invalidation** 적용.
+
+요약:
+
+- 보호된 엔드포인트는 `Authorization: Bearer <access_token>` 헤더 필요
+- access 만료 응답(`TOKEN_EXPIRED`) 받으면 `/v1/auth/refresh` 호출 → 새 access/refresh 페어 받음
+- 회전 시 옛 refresh는 즉시 revoke. 옛 토큰을 다시 쓰면 같은 family 전체가 일괄 revoke됨 (탈취 의심)
+- 모든 `/v1/auth/*` 응답엔 `Cache-Control: no-store` 부착 (토큰 캐시 방지)
+
+레이트 리밋 (IP 기준):
+
+| 엔드포인트 | 제한 |
+| :-- | :-- |
+| POST /v1/auth/signup | 5/시간 |
+| POST /v1/auth/login | 10/분 |
+| POST /v1/auth/refresh | 60/분 |
+
+초과 시 429 + `RATE_LIMIT_EXCEEDED`.
+
+
+### POST /v1/auth/signup
+
+회원가입 + 면책 동의(자본시장법 §69 증빙) + 토큰 페어 발급. 한 트랜잭션.
+
+비밀번호 정책:
+
+- 8~128자
+- 흔한 비밀번호 차단 (`password123`, `12345678` 등)
+- 같은 문자만 반복(`aaaaaaaa`) 차단
+- 이메일 local-part / 이름과 유사 차단
+
+Request:
+
+```json
+{
+  "email": "alice@example.com",
+  "password": "correct horse battery staple",
+  "name": "앨리스",
+  "disclaimer_code": "MAIN_V1"
+}
+```
+
+`disclaimer_code` 생략 시 기본값 `MAIN_V1`. IP는 서버에서 `X-Forwarded-For` → `request.client.host` 순으로 추출해 `disclaimer_acks.ip_address`에 저장.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "user": {
+      "user_id": 7,
+      "email": "alice@example.com",
+      "name": "앨리스",
+      "created_at": "2026-05-10T12:26:58Z"
+    },
+    "tokens": {
+      "access_token": "eyJ...",
+      "refresh_token": "eyJ...",
+      "token_type": "Bearer",
+      "access_expires_at": "2026-05-10T13:26:58Z",
+      "refresh_expires_at": "2026-05-24T12:26:58Z"
+    }
+  }
+}
+```
+
+Response 400 (정책 위반):
+
+```json
+{
+  "error": {
+    "code": "INVALID_PARAMETER",
+    "message": "자주 사용되는 비밀번호는 사용할 수 없습니다.",
+    "details": { "field": "password" }
+  }
+}
+```
+
+Response 409:
+
+```json
+{
+  "error": {
+    "code": "EMAIL_DUPLICATE",
+    "message": "이미 사용 중인 이메일입니다.",
+    "details": { "email": "alice@example.com" }
+  }
+}
+```
+
+
+### POST /v1/auth/login
+
+이메일+비밀번호 로그인. 새 token family 발급.
+
+Request:
+
+```json
+{ "email": "alice@example.com", "password": "..." }
+```
+
+Response 200: signup과 동일한 구조 (`{user, tokens}`).
+
+Response 401:
+
+```json
+{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "이메일 또는 비밀번호가 올바르지 않습니다."
+  }
+}
+```
+
+
+### POST /v1/auth/refresh
+
+refresh 토큰 회전. 옛 refresh를 revoke하고 새 access/refresh 페어 발급. 같은 family 유지.
+
+⚠️ **토큰 재사용 감지**: 이미 revoke된 refresh가 다시 들어오면 같은 family의 모든 활성 토큰을 일괄 revoke (탈취 시 정상 사용자도 강제 로그아웃 → 재로그인 유도).
+
+Request:
+
+```json
+{ "refresh_token": "eyJ..." }
+```
+
+Response 200:
+
+```json
+{
+  "data": {
+    "tokens": {
+      "access_token": "eyJ...",
+      "refresh_token": "eyJ...",
+      "token_type": "Bearer",
+      "access_expires_at": "...",
+      "refresh_expires_at": "..."
+    }
+  }
+}
+```
+
+Response 401:
+- `TOKEN_EXPIRED`: refresh 만료 → 재로그인
+- `UNAUTHORIZED`: 위조/미등록/이미 revoke됨 → 재로그인
+
+
+### POST /v1/auth/logout
+
+refresh 토큰 revoke. 멱등 (이미 revoke됐어도 200).
+
+Request:
+
+```json
+{ "refresh_token": "eyJ..." }
+```
+
+Response 200:
+
+```json
+{ "data": { "revoked": true } }
+```
+
+
+### 보호 엔드포인트 호출 예시
+
+```bash
+ACCESS=eyJ...
+curl -H "Authorization: Bearer $ACCESS" http://localhost:8000/v1/me
+```
+
+엔드포인트가 `Depends(get_current_user)`를 쓰면 인증 필수, `Depends(get_optional_user)`면 토큰 있을 때만 인증 사용자로 취급.
 
 
 ## 1. [프런트] 사용자 화면용

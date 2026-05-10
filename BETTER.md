@@ -260,7 +260,133 @@ endpoint → service.fetch_*  → external API
 
 ---
 
-## 정리 — 데이터 인제스트 도메인에서 일반화 가능한 원칙
+## 11. JWT refresh token rotation + family invalidation
+
+**문제**
+JWT는 stateless라 발급 후 회수가 불가. logout이 의미를 가지려면 서버측 무력화 메커니즘이 필요. 단순히 jti를 DB에 저장하고 logout 시 revoke하는 것만으로는 **토큰 탈취 시 정상 사용자가 탈취 사실을 인지할 방법이 없음**.
+
+**선택한 패턴**
+1. **rotation**: refresh 호출 = 옛 jti revoke + 새 페어 발급
+2. **family**: 같은 로그인에서 회전된 토큰은 모두 동일한 `family_id`
+3. **reuse detection**: 이미 revoke된 refresh가 다시 들어오면 → 그 family의 모든 활성 토큰을 일괄 revoke
+
+```python
+if db_token.revoked_at is not None:
+    await _invalidate_family(session, db_token.family_id)
+    raise AppException(ErrorCode.UNAUTHORIZED)
+```
+
+**효과**
+- 공격자가 토큰을 탈취해 1회 사용 → 정상 사용자가 다음 회전 시도 → family 전체 무효화 → **양쪽 모두 강제 로그아웃**
+- 정상 사용자가 즉시 "재로그인 요구"를 받으니 침해 사실을 즉시 인지
+- 단순 rotation보다 한 단계 더, OAuth 2.0 RFC 6819 §5.2.2.3 권장 패턴
+
+**대안과의 트레이드오프**
+- 단순 jti revoke만 하면: 공격자가 한 번 회전한 후엔 정상 사용자도 공격자도 모르게 분기 → 침해 지속
+- family 무효화는 false positive(정상 사용자가 옛 토큰을 우연히 재사용) 가능성이 있지만, 정상 클라이언트 구현은 회전 후 즉시 새 토큰만 사용하므로 실무에선 거의 발생 X
+
+---
+
+## 12. timing-attack 평탄화
+
+**문제**
+로그인 핸들러에서 "이메일 없음" 분기가 "비밀번호 틀림" 분기보다 빠르게 끝나면, 응답 시간 차이로 **사용자 존재 여부를 추론**하는 계정 열거 공격 가능.
+
+**선택한 패턴**
+"사용자 없음" 분기에서도 더미 해시에 대해 `verify_password`를 한 번 돌려 응답 시간을 평탄화:
+
+```python
+_DUMMY_HASH = hash_password("dummy-burn-payload")
+
+if user is None or user.password_hash is None:
+    verify_password(payload.password, _DUMMY_HASH)  # constant-time burn
+    raise AppException(ErrorCode.INVALID_CREDENTIALS)
+```
+
+**효과**
+- argon2 검증 비용(수십~수백 ms)이 양 분기에서 동일하게 소비
+- 응답 시간 측정으로 사용자 존재 여부 leak 차단
+- 추가 코드 한 줄로 보안 수준이 한 단계 상승
+
+---
+
+## 13. 회원가입 + 면책 동의 단일 트랜잭션
+
+**문제**
+자본시장법 §69는 투자 정보 제공 시 면책 동의 증빙(IP, 시각, 동의 코드)을 요구. user는 만들어졌는데 disclaimer_ack가 누락되면 컴플라이언스 사고.
+
+**선택한 패턴**
+signup 핸들러에서 user INSERT → flush → disclaimer_ack INSERT → 토큰 발급을 **한 트랜잭션으로 묶음**.
+
+```python
+session.add(user)
+await session.flush()  # email unique 충돌 즉시 감지 → EMAIL_DUPLICATE
+session.add(DisclaimerAck(user_id=user.user_id, ip_address=ip, ...))
+tokens = await _issue_token_pair(session, user.user_id)
+await session.commit()
+```
+
+**효과**
+- 어느 한 단계라도 실패하면 전부 rollback → 컴플라이언스 누수 0
+- `flush()`가 unique 충돌을 잡아서 정확한 에러 코드 매핑 가능 (commit 끝에 한꺼번에 터지면 분간 불가)
+- IP는 `X-Forwarded-For` → `request.client.host` 폴백 — 프록시 뒤 운영 환경 대응
+
+---
+
+## 14. 비밀번호 정책: 정책 모듈 분리
+
+**문제**
+Pydantic Field 제약(`min_length=8`)만으로는 약한 비밀번호(`password123`, `aaaaaaaa`)를 막을 수 없음. zxcvbn 같은 풀 분석은 의존성 부담 + 한국어 컨텍스트에 약함.
+
+**선택한 패턴**
+`app/core/password_policy.py`에 정책 함수만 분리. NIST SP 800-63B 가이드 기반:
+
+```python
+def validate_password(password, *, email=None, name=None) -> None:
+    if password.lower() in _COMMON_PASSWORDS: raise ...
+    if len(set(password)) == 1: raise ...
+    if email and email.split("@")[0].lower() in password.lower(): raise ...
+    if name and name.lower() in password.lower(): raise ...
+```
+
+서비스 레이어에서 `PasswordPolicyError` → `INVALID_PARAMETER`로 매핑.
+
+**효과**
+- 정책 변경(흔한 비번 리스트 교체, 길이 규칙 조정)이 한 파일에서만 일어남
+- pydantic 스키마와 서비스 사이 역할 분리: 형식 검증(스키마) vs 정책 검증(서비스)
+- 정책 자체 단위 테스트가 쉬움 (HTTP 안 거치고 함수 호출만)
+
+---
+
+## 15. 격리된 schema fixture로 테스트 DB 분리
+
+**문제**
+별도 테스트 DB를 띄우면 마이그레이션 동기화 부담. 같은 DB를 공유하면 테스트 간 상태 누수.
+
+**선택한 패턴**
+PostgreSQL의 schema namespace를 활용 — 테스트마다 `test_<uuid>` schema 생성 → `Base.metadata.create_all`로 모델 직접 적용 → 끝나면 schema 삭제:
+
+```python
+@pytest_asyncio.fixture
+async def db_session(db_schema):
+    engine = create_async_engine(
+        _BASE_DB_URL,
+        connect_args={"server_settings": {"search_path": db_schema}},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    ...
+```
+
+**효과**
+- 운영 schema(`public`)와 완전 격리
+- 테스트마다 깨끗한 상태 — 순서 의존성 없음
+- 별도 DB 컨테이너 불필요 (CI 비용 ↓)
+- 마이그레이션 자체를 테스트 안 함 (그건 별도 alembic check로) — 모델 == DB라는 가정만 검증
+
+---
+
+## 정리 — 데이터 인제스트 + 인증 도메인에서 일반화 가능한 원칙
 
 1. **멱등성을 PK + ON CONFLICT로 자연스럽게 강제**
 2. **외부 IO는 어댑터 서비스로 격리** (테스트·재사용·관측성)
@@ -269,3 +395,6 @@ endpoint → service.fetch_*  → external API
 5. **시드(사람) + 외부 API(자동)** 머지로 큐레이션 가치 보존
 6. **마이그레이션과 시크릿은 협업 비용을 줄이는 가장 큰 두 축**
 7. **부채는 숨기지 말고 문서화** — 정직이 장기 신뢰를 만듦
+8. **컴플라이언스가 필요한 INSERT는 한 트랜잭션** — 이중 INSERT의 부분 실패가 가장 큰 컴플라이언스 위험
+9. **stateless를 안전하게 쓰려면 stateful 무력화 채널 필수** — JWT만으론 불충분, jti+family로 회수 가능성 확보
+10. **응답 시간도 정보** — timing-attack 평탄화는 한 줄로 보안 등급을 한 단계 올림

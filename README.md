@@ -2,8 +2,17 @@
 
 리스크 우선 관점의 미국주식 리뷰 API. 스펙: `BEFORE_DOCS_v1` (DB v0.4 / API v1.0).
 
-Phase 0 골격 — FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
-비즈니스 로직은 아직 없고, 데이터 구조와 공통 인프라만 깔려 있는 상태.
+스택: FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
+
+진척도 (2026-05-10):
+
+- ✅ Phase 0 — 공통 인프라 (envelope, error codes, exception handlers, DB session, request_id)
+- ✅ tickers — 시드 50종목 메타 sync, 자동완성 검색
+- ✅ prices — yfinance OHLCV 적재
+- ✅ macro — FRED 12개 시리즈 적재 + 시계열 조회
+- ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
+- ⏳ /me, /me/watchlist (다음 단계)
+- ⏳ risk, history, models (B 담당)
 
 ## 스택
 
@@ -17,25 +26,36 @@ Phase 0 골격 — FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
 
 ```
 app/
-├── main.py                 # FastAPI 앱, 미들웨어, 예외 핸들러, /health
+├── main.py                 # FastAPI 앱, 미들웨어, 예외 핸들러, /health, lifespan(sweep)
 ├── core/
 │   ├── config.py           # pydantic-settings (.env 로드)
 │   ├── error_codes.py      # ErrorCode enum + HTTP/메시지 매핑 (스펙 §0.4)
-│   └── exceptions.py       # AppException
+│   ├── exceptions.py       # AppException
+│   ├── security.py         # argon2 + JWT encode/decode
+│   ├── password_policy.py  # 비밀번호 정책 (NIST 800-63B 기반)
+│   └── rate_limit.py       # slowapi 설정
 ├── schemas/
-│   └── common.py           # ApiResponse / ApiError 공통 envelope (스펙 §0.2)
+│   ├── common.py           # ApiResponse / ApiError 공통 envelope (스펙 §0.2)
+│   └── auth.py             # signup/login/refresh DTO
 ├── db/
 │   ├── base.py             # DeclarativeBase
 │   ├── session.py          # async engine + get_db()
-│   └── models/             # ORM 모델 12개 (테이블당 한 파일)
+│   └── models/             # ORM 모델 (테이블당 한 파일)
+├── services/
+│   ├── auth_service.py     # 인증 비즈니스 로직 (rotation, family invalidation, sweep)
+│   ├── fred_service.py     # FRED 어댑터
+│   └── yfinance_service.py # yfinance 어댑터
+├── pipelines/              # 시드(SEED_TICKERS, MACRO_INDICATORS)
 └── api/
-    ├── deps.py             # 공통 FastAPI 의존성
+    ├── deps.py             # get_db, get_current_user, get_optional_user
     └── v1/
-        └── router.py       # /v1 라우터 집합 (단계별로 endpoint 추가)
+        ├── router.py       # /v1 라우터 집합
+        └── endpoints/      # auth, tickers, prices, macro
+tests/
+├── conftest.py             # 격리 schema fixture, ASGI client
+└── test_auth.py            # 인증 시나리오 12개
 alembic/
-├── env.py                  # async 대응
-├── script.py.mako
-└── versions/               # `alembic revision --autogenerate` 결과물
+└── versions/               # 자동 생성 마이그레이션
 ```
 
 ## 레이어 규칙
@@ -96,8 +116,9 @@ docker compose exec api alembic check        # ORM ↔ DB drift 점검
 docker compose exec api ruff check .
 docker compose exec api ruff format .
 
-# 테스트 (Phase 1+에서 추가)
+# 테스트
 docker compose exec api pytest
+docker compose exec api pytest tests/test_auth.py -v
 
 # psql 셸
 docker compose exec db psql -U before -d before
