@@ -12,7 +12,7 @@
 - ✅ macro — FRED 12개 시리즈 적재 + 시계열 조회
 - ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
 - ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의
-- ⏳ /me/watchlist (다음 단계)
+- ✅ /me/watchlist — GET/POST/DELETE, 5개 제한, 중복 차단, 비활성 ticker 거절, 멱등 삭제
 - ⏳ risk, history, models (B 담당)
 
 ## 스택
@@ -45,6 +45,7 @@ app/
 ├── services/
 │   ├── auth_service.py     # 인증 비즈니스 로직 (rotation, family invalidation, sweep)
 │   ├── me_service.py       # 사용자 본인 (조회/수정/탈퇴/disclaimer)
+│   ├── watchlist_service.py # 워치리스트 (limit/duplicate/active 검증)
 │   ├── fred_service.py     # FRED 어댑터
 │   └── yfinance_service.py # yfinance 어댑터
 ├── pipelines/              # 시드(SEED_TICKERS, MACRO_INDICATORS)

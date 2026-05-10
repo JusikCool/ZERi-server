@@ -64,6 +64,82 @@ async def db_session(db_schema: str) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
+async def seed_tickers(db_session: AsyncSession) -> list[str]:
+    """워치리스트/리스크 테스트용 최소 시드. 격리 schema라 매번 새로 채워야 함."""
+    from app.db.models import Ticker
+
+    rows = [
+        Ticker(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            company_name_kr="애플",
+            sector="메가캡 테크",
+            market_cap=3_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="MSFT",
+            company_name="Microsoft Corporation",
+            company_name_kr="마이크로소프트",
+            sector="메가캡 테크",
+            market_cap=3_500_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="NVDA",
+            company_name="NVIDIA Corporation",
+            company_name_kr="엔비디아",
+            sector="반도체",
+            market_cap=4_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="GOOGL",
+            company_name="Alphabet Inc.",
+            company_name_kr="알파벳",
+            sector="메가캡 테크",
+            market_cap=2_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="AMZN",
+            company_name="Amazon.com, Inc.",
+            company_name_kr="아마존",
+            sector="이커머스",
+            market_cap=1_800_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="META",
+            company_name="Meta Platforms, Inc.",
+            company_name_kr="메타",
+            sector="메가캡 테크",
+            market_cap=1_500_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(  # 비활성 — TICKER_NOT_FOUND 케이스용
+            ticker="DEAD",
+            company_name="Delisted Co.",
+            company_name_kr=None,
+            sector=None,
+            market_cap=None,
+            currency="USD",
+            is_active=False,
+        ),
+    ]
+    for r in rows:
+        db_session.add(r)
+    await db_session.commit()
+    return [r.ticker for r in rows if r.is_active]
+
+
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """get_db override한 in-process ASGI 테스트 클라이언트.
 

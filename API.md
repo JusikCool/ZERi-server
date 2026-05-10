@@ -52,7 +52,7 @@
 | TICKER_NOT_FOUND | 404 | 종목 없음 |
 | MACRO_NOT_FOUND | 404 | 거시지표 없음 |
 | PREDICTION_NOT_READY | 503 | 예측 데이터 준비 중 |
-| WATCHLIST_LIMIT_EXCEEDED | 422 | 워치리스트 5개 초과 |
+| WATCHLIST_LIMIT_EXCEEDED | 422 | 워치리스트 안전 상한(100) 초과 |
 | WATCHLIST_DUPLICATE | 409 | 워치리스트 중복 |
 | DISCLAIMER_REQUIRED | 403 | 면책 동의 필요 |
 | RATE_LIMIT_EXCEEDED | 429 | 호출 제한 |
@@ -330,6 +330,111 @@ Response 200:
   "data": {
     "deleted": true,
     "deleted_at": "2026-05-10T13:00:00Z"
+  }
+}
+```
+
+
+### GET /v1/me/watchlist
+
+내 워치리스트 조회. 종목 메타(이름·섹터·시가총액) join 결과 포함.
+
+Auth: 필수.
+
+**표시 정책 vs 저장 정책**:
+- 등록(POST) 안전 상한은 **100개** (DoS·실수 방지)
+- 화면별 표시 개수는 클라이언트가 `?limit`로 조정 — 홈 미리보기는 `?limit=5`, 마이페이지는 미지정(전체)
+
+Query:
+
+| 이름 | 타입 | 기본 | 제약 | 설명 |
+| :-- | :-- | :--: | :-- | :-- |
+| limit | int |  | 1~100 | 반환 개수 상한. 미지정 시 전체. |
+| order | string | desc | asc \| desc | added_at 정렬. desc=최신 먼저, asc=오래된 순 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "count": 7,
+    "items": [
+      {
+        "ticker": "AAPL",
+        "company_name": "Apple Inc.",
+        "company_name_kr": "애플",
+        "sector": "메가캡 테크",
+        "market_cap": 3000000000000,
+        "is_active": true,
+        "added_at": "2026-05-10T13:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+`count`는 **사용자가 보유한 총 개수** (limit 적용 전). `items`는 limit 적용 후 실제 반환 개수. 홈에서 "총 N개 중 5개 미리보기" 같은 표시 가능.
+
+curl 예시:
+
+```bash
+# 홈화면 — 최신 5개 미리보기
+curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist?limit=5'
+
+# 마이페이지 — 전체 (최신 순 default)
+curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist'
+
+# 오래된 순으로 정렬
+curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist?order=asc'
+```
+
+
+### POST /v1/me/watchlist
+
+워치리스트에 종목 추가. 안전 상한 **100개** (사용자 실수/악용 방지용 — 일반적인 사용 범위는 훨씬 작음).
+
+Auth: 필수.
+
+Request:
+
+```json
+{ "ticker": "AAPL" }
+```
+
+소문자 입력도 받음 (서버에서 자동 대문자화).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "item": { "ticker": "AAPL", "company_name": "...", ... }
+  }
+}
+```
+
+에러:
+
+| 상황 | HTTP | code |
+| :-- | :--: | :-- |
+| 미존재 / 비활성 종목 | 404 | TICKER_NOT_FOUND |
+| 이미 추가된 종목 | 409 | WATCHLIST_DUPLICATE |
+| 5개 초과 | 422 | WATCHLIST_LIMIT_EXCEEDED |
+
+
+### DELETE /v1/me/watchlist/{ticker}
+
+워치리스트에서 종목 삭제. **멱등** (없는 ticker도 200, `deleted: false`로 표시).
+
+Auth: 필수. ticker는 소문자/대문자 모두 받음.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "deleted": true,
+    "ticker": "AAPL"
   }
 }
 ```
