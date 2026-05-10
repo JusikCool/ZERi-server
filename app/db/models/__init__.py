@@ -10,6 +10,7 @@ from app.db.models.macro_indicator import MacroIndicator
 from app.db.models.prediction import Prediction
 from app.db.models.prediction_evaluation import PredictionEvaluation
 from app.db.models.price import Price
+from app.db.models.refresh_token import RefreshToken
 from app.db.models.risk_grade import RiskGrade
 from app.db.models.ticker import Ticker
 from app.db.models.user import User
@@ -30,4 +31,5 @@ __all__ = [
     "DisclaimerAck",
     "PredictionEvaluation",
     "BacktestResult",
+    "RefreshToken",
 ]

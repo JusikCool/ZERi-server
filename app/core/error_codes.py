@@ -5,6 +5,7 @@ class ErrorCode(str, Enum):
     INVALID_PARAMETER = "INVALID_PARAMETER"
     UNAUTHORIZED = "UNAUTHORIZED"
     TOKEN_EXPIRED = "TOKEN_EXPIRED"
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     EMAIL_DUPLICATE = "EMAIL_DUPLICATE"
     TICKER_NOT_FOUND = "TICKER_NOT_FOUND"
     MACRO_NOT_FOUND = "MACRO_NOT_FOUND"
@@ -20,6 +21,7 @@ ERROR_HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INVALID_PARAMETER: 400,
     ErrorCode.UNAUTHORIZED: 401,
     ErrorCode.TOKEN_EXPIRED: 401,
+    ErrorCode.INVALID_CREDENTIALS: 401,
     ErrorCode.EMAIL_DUPLICATE: 409,
     ErrorCode.TICKER_NOT_FOUND: 404,
     ErrorCode.MACRO_NOT_FOUND: 404,
@@ -36,6 +38,7 @@ DEFAULT_ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.INVALID_PARAMETER: "잘못된 파라미터입니다.",
     ErrorCode.UNAUTHORIZED: "인증이 필요합니다.",
     ErrorCode.TOKEN_EXPIRED: "토큰이 만료되었습니다.",
+    ErrorCode.INVALID_CREDENTIALS: "이메일 또는 비밀번호가 올바르지 않습니다.",
     ErrorCode.EMAIL_DUPLICATE: "이미 사용 중인 이메일입니다.",
     ErrorCode.TICKER_NOT_FOUND: "해당 종목을 찾을 수 없습니다.",
     ErrorCode.MACRO_NOT_FOUND: "해당 거시지표를 찾을 수 없습니다.",
