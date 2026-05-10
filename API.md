@@ -79,17 +79,33 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 
 레이트 리밋 (IP 기준):
 
-| 엔드포인트 | 제한 |
-| :-- | :-- |
-| POST /v1/auth/signup | 5/시간 |
-| POST /v1/auth/login | 10/분 |
-| POST /v1/auth/refresh | 60/분 |
-| POST /v1/me/watchlist | 60/분 |
-| DELETE /v1/me/watchlist/{ticker} | 60/분 |
+| 엔드포인트 | 제한 | 근거 |
+| :-- | :-- | :-- |
+| POST /v1/auth/signup | 5/시간 | 가입 폭주 방지 |
+| POST /v1/auth/login | 10/분 | 무차별 비밀번호 공격 방어 |
+| POST /v1/auth/refresh | 60/분 | 토큰 회전 폭주 방지 |
+| PATCH /v1/me | 20/분 | argon2 검증 비용 + 폭주 방어 |
+| DELETE /v1/me | 5/시간 | 탈퇴 의도 외 자동화 폭주 방지 |
+| POST /v1/me/disclaimer-ack | 30/분 | 매 호출 INSERT — DB 행 누적 차단 |
+| POST /v1/me/watchlist | 60/분 | 등록 폭주 방지 |
+| DELETE /v1/me/watchlist/{ticker} | 60/분 | 삭제 폭주 방지 |
 
-초과 시 429 + `RATE_LIMIT_EXCEEDED`.
+GET 엔드포인트는 인증된 단일 사용자 데이터라 abuse 비용이 작아 미적용.
 
-운영 환경에서는 reverse proxy 뒤(ALB/Nginx) 가정 — 레이트 키는 `X-Forwarded-For` 첫 토큰 → 없으면 `request.client.host`. 멀티 인스턴스 진입 시 storage를 Redis로 교체 필요(현재 in-memory).
+초과 시 429 + `RATE_LIMIT_EXCEEDED` envelope:
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+    "details": { "limit": "5 per 1 hour" }
+  },
+  "meta": { "request_id": "req_xxx", "ts": "..." }
+}
+```
+
+운영 환경에서는 reverse proxy 뒤(ALB/Nginx) 가정 — 레이트 키는 `X-Forwarded-For` 첫 토큰 → 없으면 `request.client.host`. 다른 IP는 별도 카운터로 격리(검증 완료). 멀티 인스턴스 진입 시 storage를 Redis로 교체 필요(현재 in-memory).
 
 
 ### POST /v1/auth/signup

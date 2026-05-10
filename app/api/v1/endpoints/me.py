@@ -2,6 +2,12 @@
 
 전부 인증 필수 (get_current_user 의존성).
 엔드포인트는 얇게 — 입력 파싱 + service 호출 + envelope 래핑.
+
+Rate limit 정책:
+- GET: 적용 안 함 (인증된 단일 사용자 데이터, abuse 비용 작음)
+- PATCH: 20/분 (argon2 비번 검증 비용 + 폭주 방어)
+- DELETE: 5/시간 (탈퇴 의도 외 자동화 도구 폭주 방어, 실수 방지)
+- disclaimer-ack: 30/분 (매 호출마다 INSERT — 무한 호출 시 DB 행 누적 차단)
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.db.models import User
 from app.schemas.common import ApiResponse
 from app.schemas.me import (
@@ -51,8 +58,10 @@ async def get_me(
     response_model=ApiResponse[UpdateMeData],
     summary="이름 / 비밀번호 변경 (부분 갱신)",
 )
+@limiter.limit("20/minute")
 async def update_me(
     payload: UpdateMeRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[UpdateMeData]:
@@ -65,7 +74,9 @@ async def update_me(
     response_model=ApiResponse[DeleteMeData],
     summary="회원 탈퇴 (하이브리드 soft-delete: 이메일 익명화 + 모든 refresh revoke)",
 )
+@limiter.limit("5/hour")
 async def delete_me(
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DeleteMeData]:
@@ -78,6 +89,7 @@ async def delete_me(
     response_model=ApiResponse[DisclaimerAckData],
     summary="면책 동의 기록 (재동의 시 새 행 INSERT)",
 )
+@limiter.limit("30/minute")
 async def ack_disclaimer(
     payload: DisclaimerAckRequest,
     request: Request,
