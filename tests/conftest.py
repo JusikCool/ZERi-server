@@ -140,6 +140,63 @@ async def seed_tickers(db_session: AsyncSession) -> list[str]:
 
 
 @pytest_asyncio.fixture
+async def seed_risk_grades(db_session: AsyncSession, seed_tickers: list[str]) -> dict[str, float]:
+    """일부 종목에만 risk_grade 부여 (NULLS LAST 테스트를 위해).
+
+    worst_case_pct는 음수(=손실율). 절댓값이 클수록 리스크 높음.
+    예: AAPL=-0.03 (낮음), NVDA=-0.25 (높음)
+    """
+    from datetime import date
+    from decimal import Decimal
+
+    from app.db.models import Prediction, RiskGrade
+
+    risk_map = {
+        "AAPL": Decimal("-0.0300"),  # 가장 낮은 리스크
+        "MSFT": Decimal("-0.0800"),
+        "NVDA": Decimal("-0.2500"),  # 가장 높은 리스크
+        # GOOGL/AMZN/META는 risk_grade 없음 — NULL로 끝에 정렬
+    }
+
+    today = date.today()
+    for ticker, wc in risk_map.items():
+        pred = Prediction(
+            ticker=ticker,
+            base_date=today,
+            horizon_days=30,
+            q05_path=[],
+            q15_path=[],
+            worst_case_pct=wc,
+            model_name="test",
+            model_version="0.0.0",
+        )
+        db_session.add(pred)
+    await db_session.flush()
+
+    preds_by_ticker = {
+        p.ticker: p.prediction_id for p in (await _scalars_all(db_session, Prediction))
+    }
+    for ticker, wc in risk_map.items():
+        rg = RiskGrade(
+            ticker=ticker,
+            prediction_id=preds_by_ticker[ticker],
+            grade="HIGH" if abs(wc) > Decimal("0.10") else "LOW",
+            message_code="TEST",
+            worst_case_pct=wc,
+            as_of=today,
+        )
+        db_session.add(rg)
+    await db_session.commit()
+    return {k: float(v) for k, v in risk_map.items()}
+
+
+async def _scalars_all(session: AsyncSession, model):
+    from sqlalchemy import select
+
+    return list((await session.execute(select(model))).scalars().all())
+
+
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """get_db override한 in-process ASGI 테스트 클라이언트.
 

@@ -12,7 +12,7 @@
 - ✅ macro — FRED 12개 시리즈 적재 + 시계열 조회
 - ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
 - ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의
-- ✅ /me/watchlist — GET/POST/DELETE, 5개 제한, 중복 차단, 비활성 ticker 거절, 멱등 삭제
+- ✅ /me/watchlist — GET(?limit, ?sort: created_at/risk × asc/desc) / POST / DELETE, 안전 상한 100, 중복·비활성 차단, 멱등 삭제, rate limit 60/분
 - ⏳ risk, history, models (B 담당)
 
 ## 스택

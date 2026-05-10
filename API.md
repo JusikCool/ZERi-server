@@ -84,8 +84,12 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 | POST /v1/auth/signup | 5/시간 |
 | POST /v1/auth/login | 10/분 |
 | POST /v1/auth/refresh | 60/분 |
+| POST /v1/me/watchlist | 60/분 |
+| DELETE /v1/me/watchlist/{ticker} | 60/분 |
 
 초과 시 429 + `RATE_LIMIT_EXCEEDED`.
+
+운영 환경에서는 reverse proxy 뒤(ALB/Nginx) 가정 — 레이트 키는 `X-Forwarded-For` 첫 토큰 → 없으면 `request.client.host`. 멀티 인스턴스 진입 시 storage를 Redis로 교체 필요(현재 in-memory).
 
 
 ### POST /v1/auth/signup
@@ -341,16 +345,26 @@ Response 200:
 
 Auth: 필수.
 
-**표시 정책 vs 저장 정책**:
-- 등록(POST) 안전 상한은 **100개** (DoS·실수 방지)
-- 화면별 표시 개수는 클라이언트가 `?limit`로 조정 — 홈 미리보기는 `?limit=5`, 마이페이지는 미지정(전체)
+**저장/표시 정책**:
+- 저장 안전 상한 **100개** (사용자 실수/악용 방지 — 일반적 사용 범위는 훨씬 작음)
+- 화면별 표시 개수는 클라이언트가 `?limit`으로 조정 — 홈 미리보기는 `?limit=5`, 마이페이지는 미지정(전체)
+- 정렬은 `?sort`로 4가지 — 시간 / 하방리스크 기준
 
 Query:
 
 | 이름 | 타입 | 기본 | 제약 | 설명 |
 | :-- | :-- | :--: | :-- | :-- |
 | limit | int |  | 1~100 | 반환 개수 상한. 미지정 시 전체. |
-| order | string | desc | asc \| desc | added_at 정렬. desc=최신 먼저, asc=오래된 순 |
+| sort | string | created_at_desc | created_at_desc \| created_at_asc \| risk_high \| risk_low | 정렬 기준 |
+
+`sort` 의미:
+
+- `created_at_desc`: 최신 추가 먼저 (default, 홈/마이페이지 기본)
+- `created_at_asc`: 오래된 추가 먼저
+- `risk_high`: **하방리스크 높은 종목 먼저** — `worst_case_pct ASC NULLS LAST` (음수가 큰 손실율 먼저, risk_grade 미산정 종목은 끝)
+- `risk_low`: **하방리스크 낮은 종목 먼저** — `worst_case_pct DESC NULLS LAST`
+
+risk_grade가 아직 없는 종목(B 도메인 미배포 시점)은 항상 끝에 배치 — 빈 결과가 나오지 않음.
 
 Response 200:
 
@@ -373,27 +387,34 @@ Response 200:
 }
 ```
 
-`count`는 **사용자가 보유한 총 개수** (limit 적용 전). `items`는 limit 적용 후 실제 반환 개수. 홈에서 "총 N개 중 5개 미리보기" 같은 표시 가능.
+`count`는 **사용자가 보유한 총 개수** (limit 적용 전). `items`는 limit/sort 적용 후 실제 반환 개수. 홈에서 "총 N개 중 5개 미리보기" 같은 표시 가능.
 
 curl 예시:
 
 ```bash
 # 홈화면 — 최신 5개 미리보기
-curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist?limit=5'
+curl -H "Authorization: Bearer $T" \
+  'http://localhost:8000/v1/me/watchlist?limit=5&sort=created_at_desc'
 
-# 마이페이지 — 전체 (최신 순 default)
-curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist'
+# 마이페이지 — 전체, 최신순 (default)
+curl -H "Authorization: Bearer $T" \
+  'http://localhost:8000/v1/me/watchlist'
 
-# 오래된 순으로 정렬
-curl -H "Authorization: Bearer $T" 'http://localhost:8000/v1/me/watchlist?order=asc'
+# 마이페이지 — 하방리스크 높은 순
+curl -H "Authorization: Bearer $T" \
+  'http://localhost:8000/v1/me/watchlist?sort=risk_high'
+
+# 마이페이지 — 오래된 순
+curl -H "Authorization: Bearer $T" \
+  'http://localhost:8000/v1/me/watchlist?sort=created_at_asc'
 ```
 
 
 ### POST /v1/me/watchlist
 
-워치리스트에 종목 추가. 안전 상한 **100개** (사용자 실수/악용 방지용 — 일반적인 사용 범위는 훨씬 작음).
+워치리스트에 종목 추가. 안전 상한 **100개** (사용자 실수/악용 방지용).
 
-Auth: 필수.
+Auth: 필수. Rate limit: **60/분 per IP** (폭주 방어).
 
 Request:
 
@@ -419,14 +440,17 @@ Response 200:
 | :-- | :--: | :-- |
 | 미존재 / 비활성 종목 | 404 | TICKER_NOT_FOUND |
 | 이미 추가된 종목 | 409 | WATCHLIST_DUPLICATE |
-| 5개 초과 | 422 | WATCHLIST_LIMIT_EXCEEDED |
+| 안전 상한(100) 초과 | 422 | WATCHLIST_LIMIT_EXCEEDED |
+| Rate limit 초과 | 429 | RATE_LIMIT_EXCEEDED |
 
 
 ### DELETE /v1/me/watchlist/{ticker}
 
 워치리스트에서 종목 삭제. **멱등** (없는 ticker도 200, `deleted: false`로 표시).
 
-Auth: 필수. ticker는 소문자/대문자 모두 받음.
+Auth: 필수. Rate limit: **60/분 per IP**. ticker는 소문자/대문자 모두 받음.
+
+**접근 제어**: 다른 사용자의 watchlist는 절대 삭제 못 함 — 쿼리가 `WHERE user_id = current_user.user_id`로 항상 필터됨. 다른 사용자의 ticker를 DELETE 시도해도 본인 워치리스트엔 없으므로 `deleted: false`로 응답.
 
 Response 200:
 

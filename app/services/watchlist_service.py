@@ -1,30 +1,42 @@
 """워치리스트 비즈니스 로직.
 
-- list_watchlist: 사용자 워치리스트 + 종목 메타 join. ?limit, ?order 지원
+- list_watchlist: 사용자 워치리스트 + 종목 메타 join. ?limit, ?sort 지원
 - add_watchlist: 종목 추가 (안전 상한 100, 중복 차단, ticker 존재/active 검증)
 - remove_watchlist: 종목 삭제 (멱등 — 없는 ticker도 200)
 
-표시 정책 vs 저장 정책:
-- "홈화면 최대 5개"는 표시 정책 — 클라이언트가 ?limit=5로 호출
-- 100은 저장 안전 상한 — 사용자가 실수/악의로 무한 등록하는 것 방지
+저장 정책:
+- 안전 상한 100개 — 사용자 실수/악용으로 인한 무한 등록 방지.
+  사람이 실제로 추적하는 종목은 100개 이상 거의 없음.
+- 표시 정책(홈 5개 vs 마이페이지 전체)은 클라이언트가 ?limit으로 조정.
 
-동시성 노트:
-- POST는 카운트 → INSERT 사이 race로 안전 상한 +1 등록 가능 (드물게 101개).
-  100이라는 큰 값에서는 사실상 영향 없음. 5처럼 엄격한 룰이 아니므로 advisory lock 불필요.
-- DELETE는 idempotent라 race 무관.
+접근 제어:
+- 모든 쿼리는 `Watchlist.user_id == user.user_id`로 필터 — 다른 사용자 데이터 노출 불가.
+- user는 Depends(get_current_user)로 주입되며, deleted_at IS NOT NULL인 계정은
+  deps에서 미리 차단됨. 즉 여기에 도달한 user는 항상 활성 인증 사용자.
+
+정렬 옵션 (sort):
+- created_at_desc (default, 최신 먼저)
+- created_at_asc (오래된 순)
+- risk_high (worst_case_pct ASC NULLS LAST — 음수 손실율이 큰 종목 먼저)
+- risk_low (worst_case_pct DESC NULLS LAST — 손실율이 작은 종목 먼저)
+
+risk 정렬 도메인 가정:
+- worst_case_pct는 NUMERIC(6,4)로 손실율(보통 음수, 예: -0.1500 = 최악 시 15% 손실).
+- "리스크 높음" = 음수가 큰 값 = ASC 정렬 시 위로.
+- risk_grades 행이 없는 워치리스트 항목은 NULLS LAST로 끝에 배치.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import asc, delete, desc, func, nulls_last, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
-from app.db.models import Ticker, User, Watchlist
+from app.db.models import RiskGrade, Ticker, User, Watchlist
 from app.schemas.watchlist import (
     AddWatchlistData,
     AddWatchlistRequest,
@@ -33,10 +45,15 @@ from app.schemas.watchlist import (
     WatchlistItem,
 )
 
-# 저장 안전 상한. 사람이 실제로 추적하는 종목은 100개 이상 거의 안 됨 — DoS/실수 방지용.
+# 저장 안전 상한 — 일반 사용 범위는 훨씬 작음. 100 이상 등록 시 422.
 WATCHLIST_LIMIT = 100
 
-OrderDirection = Literal["asc", "desc"]
+SortOption = Literal[
+    "created_at_desc",
+    "created_at_asc",
+    "risk_high",
+    "risk_low",
+]
 
 
 def _to_item(w: Watchlist, t: Ticker) -> WatchlistItem:
@@ -59,13 +76,9 @@ async def list_watchlist(
     user: User,
     *,
     limit: int | None = None,
-    order: OrderDirection = "desc",
+    sort: SortOption = "created_at_desc",
 ) -> WatchlistData:
     """워치리스트 조회.
-
-    - order: 'desc'(default, 최신 먼저) | 'asc'(오래된 순)
-    - limit: 반환 개수 상한. None이면 전체 (사용자가 보유한 만큼).
-            홈화면처럼 미리보기는 limit=5로 호출.
 
     `count`는 limit 적용 전 사용자의 총 보유 개수 — 홈에서 "총 N개 중 5개"
     같은 표시를 가능하게 함.
@@ -75,7 +88,25 @@ async def list_watchlist(
         .join(Ticker, Watchlist.ticker == Ticker.ticker)
         .where(Watchlist.user_id == user.user_id)
     )
-    base = base.order_by(Watchlist.added_at.desc() if order == "desc" else Watchlist.added_at.asc())
+
+    if sort in ("risk_high", "risk_low"):
+        # risk_grades 없을 수 있으므로 LEFT JOIN, NULL은 끝으로.
+        base = base.outerjoin(RiskGrade, RiskGrade.ticker == Watchlist.ticker)
+        # added_at을 tie-breaker로 둬서 같은 worst_case_pct도 deterministic.
+        if sort == "risk_high":
+            base = base.order_by(
+                nulls_last(asc(RiskGrade.worst_case_pct)),
+                Watchlist.added_at.desc(),
+            )
+        else:  # risk_low
+            base = base.order_by(
+                nulls_last(desc(RiskGrade.worst_case_pct)),
+                Watchlist.added_at.desc(),
+            )
+    elif sort == "created_at_asc":
+        base = base.order_by(Watchlist.added_at.asc())
+    else:  # created_at_desc (default)
+        base = base.order_by(Watchlist.added_at.desc())
 
     total = (
         await session.scalar(
@@ -88,7 +119,8 @@ async def list_watchlist(
         base = base.limit(limit)
 
     rows = (await session.execute(base)).all()
-    items = [_to_item(w, t) for (w, t) in rows]
+    # outerjoin 시 결과는 (Watchlist, Ticker, RiskGrade)지만 RiskGrade는 unpack 안 함
+    items = [_to_item(row[0], row[1]) for row in rows]
     return WatchlistData(count=total, items=items)
 
 
@@ -100,7 +132,10 @@ async def add_watchlist(
     user: User,
     payload: AddWatchlistRequest,
 ) -> AddWatchlistData:
-    """검증 → INSERT → commit. PATCH /me와 동일한 'validate-then-mutate' 패턴."""
+    """검증 → INSERT → commit. PATCH /me와 동일한 'validate-then-mutate' 패턴.
+
+    저장 안전 상한 100. 화면별 표시 제한은 list_watchlist의 limit으로 처리.
+    """
     ticker_upper = payload.ticker.upper()
 
     # ---- phase 1: validate ------------------------------------------------
@@ -120,7 +155,7 @@ async def add_watchlist(
             details={"ticker": ticker_upper},
         )
 
-    # 5개 제한 (race가 미세하게 있을 수 있으나 INSERT 시 별도 안전망 없음 — 부채로 명시)
+    # 저장 안전 상한 — race로 +1 등록될 수 있으나 100이라는 큰 값에서 사실상 무영향.
     count = await session.scalar(
         select(func.count()).select_from(Watchlist).where(Watchlist.user_id == user.user_id)
     )
