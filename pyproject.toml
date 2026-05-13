@@ -21,6 +21,17 @@ dependencies = [
     "slowapi>=0.1.9",
 ]
 
+# 모델 추론(POST /v1/risk/sync/run-inference) 만 사용. 메인 서버는 torch 없이도 부팅.
+# 설치: uv sync --extra inference
+[project.optional-dependencies]
+inference = [
+    "torch>=2.2",
+    "pytorch-lightning>=2.4",
+    "pytorch-forecasting>=1.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

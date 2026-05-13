@@ -24,6 +24,14 @@ class Settings(BaseSettings):
 
     fred_api_key: str = ""
 
+    # ZERi-ai-model 폴더 경로 (predict_kronos.py / predict_with_xai.py 위치).
+    # 미설정 시 ../ZERi-ai-model 로 자동 추정.
+    zeri_ai_model_path: str = ""
+    # 추론 스크립트 실행에 쓸 파이썬 인터프리터. 비우면 sys.executable.
+    zeri_ai_model_python: str = ""
+    # 한 번 호출에 허용할 최대 추론 시간(초). 기본 4시간 (CPU Kronos 50종목 최대).
+    inference_timeout_sec: int = 60 * 60 * 4
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
