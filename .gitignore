@@ -211,8 +211,8 @@ __marimo__/
 
 .DS_Store
 
-# ZERi: 모델 산출물 / 학습 데이터는 ZERi-ai-model 에서 관리.
-# 서버 루트에 떨어진 파일은 임시 작업 산출물이라 보고 추적 안 함.
+# ZERi: 임시 산출물은 추적 X. 단 ZERi-server 통합 layout 의 models/ 와 data/ 는
+# 의도된 위치라 그곳에서만 ckpt/csv 허용.
 /*.csv
 /*.ckpt
 /*.pt
@@ -221,3 +221,21 @@ __marimo__/
 /*.onnx
 /*.npz
 /*.pkl
+
+# 모델 가중치 (m3.ckpt 등) 는 ZERi-server/models/ 에 저장.
+# 6MB 정도라 image 에 COPY 해서 배포해도 OK.
+# git 추적은 LFS 또는 외부 storage 권장.
+/models/*.ckpt
+/models/*.pt
+/models/*.pth
+/models/*.safetensors
+
+# 학습 데이터 (있을 경우)
+/data/*.csv
+/data/*.parquet
+
+# PyTorch Lightning 자동 로그 (추론 시 생성됨)
+/lightning_logs/
+
+# Claude Code 작업 디렉토리
+/.claude/
