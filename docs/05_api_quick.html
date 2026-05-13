@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>ZERi-server · API 한 페이지</title>
+<style>
+:root {
+  --bg:        #f2f2f7;
+  --card:     #ffffff;
+  --label:    #1d1d1f;
+  --sub:      #6e6e73;
+  --line:    rgba(60,60,67,0.10);
+  --get:      #34c759;
+  --post:    #007aff;
+  --patch:   #ff9500;
+  --delete:  #ff3b30;
+  --num:    #8e8e93;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin:0; padding:0;
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Apple SD Gothic Neo", "Pretendard", sans-serif;
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 56px 20px 96px; }
+header h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; margin: 0 0 6px; }
+header .sub { color: var(--sub); font-size: 15px; letter-spacing: -0.01em; }
+header .meta { margin-top: 18px; color: var(--sub); font-size: 13px; display: flex; gap: 18px; flex-wrap: wrap; }
+header .meta strong { color: var(--label); font-weight: 600; }
+.section { margin-top: 36px; }
+.section h2 {
+  font-size: 13px; font-weight: 600; color: var(--sub);
+  letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 8px 14px;
+}
+.card { background: var(--card); border-radius: 14px; overflow: hidden; box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
+.row {
+  display: grid; grid-template-columns: 36px 60px 1fr; gap: 14px;
+  align-items: center; padding: 14px 16px; border-top: 0.5px solid var(--line);
+}
+.row:first-child { border-top: 0; }
+.num { font-size: 12px; color: var(--num); font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
+.method { font-size: 11px; font-weight: 700; text-align: center; color: #fff; padding: 4px 0; border-radius: 6px; letter-spacing: 0.04em; }
+.method.get    { background: var(--get); }
+.method.post   { background: var(--post); }
+.method.patch  { background: var(--patch); }
+.method.delete { background: var(--delete); }
+.body { min-width: 0; }
+.path { font-family: "SF Mono", ui-monospace, "JetBrains Mono", monospace; font-size: 13px; color: var(--label); letter-spacing: -0.01em; word-break: break-all; }
+.path .param { color: var(--post); }
+.desc { font-size: 13px; color: var(--sub); margin-top: 3px; line-height: 1.4; }
+.tag {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 2px 7px; border-radius: 999px; vertical-align: middle;
+  margin-left: 6px; color: var(--sub); background: rgba(60,60,67,0.08);
+}
+.tag.auth { color: #007aff; background: rgba(0,122,255,0.10); }
+.tag.optional { color: #ff9500; background: rgba(255,149,0,0.10); }
+.tag.cron { color: #af52de; background: rgba(175,82,222,0.10); }
+footer { margin-top: 48px; text-align: center; color: var(--sub); font-size: 12px; }
+@media(max-width:480px){
+  .row { grid-template-columns: 28px 56px 1fr; gap: 10px; padding: 12px; }
+  .path { font-size: 12px; } .desc { font-size: 12px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>API 한 페이지</h1>
+  <div class="sub">ZERi-server · 전 엔드포인트 27개 요약</div>
+  <div class="meta">
+    <span>Base · <strong>http://localhost:8000</strong></span>
+    <span>응답 · <strong>ApiResponse envelope</strong></span>
+    <span>스펙 · <strong>2026-05-13 develop</strong></span>
+  </div>
+</header>
+
+<section class="section">
+  <h2>인증 (F-AUTH)</h2>
+  <div class="card">
+    <div class="row"><div class="num">01</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/auth/signup</div><div class="desc">회원가입 + 면책 동의 한 번에. 5/hour/IP</div></div></div>
+    <div class="row"><div class="num">02</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/auth/login</div><div class="desc">이메일·비번 로그인 → access+refresh 토큰 한 쌍. 10/min/IP</div></div></div>
+    <div class="row"><div class="num">03</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/auth/refresh</div><div class="desc">refresh 토큰 회전 — 옛 토큰 무효화 + 새 한 쌍 발급. 60/min/IP</div></div></div>
+    <div class="row"><div class="num">04</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/auth/logout</div><div class="desc">refresh 토큰 revoke (서버측 무력화)</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>마이페이지 (F-ME)</h2>
+  <div class="card">
+    <div class="row"><div class="num">05</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/me <span class="tag auth">인증</span></div><div class="desc">현재 로그인 사용자 프로필 + 면책 동의 이력</div></div></div>
+    <div class="row"><div class="num">06</div><div class="method patch">PATCH</div><div class="body">
+      <div class="path">/v1/me <span class="tag auth">인증</span></div><div class="desc">이름·비밀번호 부분 갱신. 20/min/IP (argon2 비용)</div></div></div>
+    <div class="row"><div class="num">07</div><div class="method delete">DELETE</div><div class="body">
+      <div class="path">/v1/me <span class="tag auth">인증</span></div><div class="desc">탈퇴 — 하이브리드 soft-delete + email 익명화 + refresh 전체 revoke. 5/hour/IP</div></div></div>
+    <div class="row"><div class="num">08</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/me/disclaimer-ack <span class="tag auth">인증</span></div><div class="desc">면책 추가 동의 기록 (IP·UA 저장). 30/min/IP</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>워치리스트 (F-WATCHLIST)</h2>
+  <div class="card">
+    <div class="row"><div class="num">09</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/me/watchlist?limit=&amp;sort= <span class="tag auth">인증</span></div>
+      <div class="desc">내 워치리스트. sort = created_at_desc | created_at_asc | risk_high | risk_low</div></div></div>
+    <div class="row"><div class="num">10</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/me/watchlist <span class="tag auth">인증</span></div>
+      <div class="desc">종목 추가. 중복 409 / 한도 100 초과 422. 60/min/IP</div></div></div>
+    <div class="row"><div class="num">11</div><div class="method delete">DELETE</div><div class="body">
+      <div class="path">/v1/me/watchlist/<span class="param">{ticker}</span> <span class="tag auth">인증</span></div>
+      <div class="desc">종목 제거 (멱등). 60/min/IP</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>종목 마스터 (F-TICKERS)</h2>
+  <div class="card">
+    <div class="row"><div class="num">12</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/tickers</div><div class="desc">활성 종목 전체. 메타 (사명·sector·시총·통화)</div></div></div>
+    <div class="row"><div class="num">13</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/tickers/search?q=</div><div class="desc">자동완성. ticker prefix → 영문명 → 한글명 우선순위</div></div></div>
+    <div class="row"><div class="num">14</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/tickers/sync/<span class="param">{target}</span> <span class="tag cron">운영</span></div>
+      <div class="desc">target=all → 시드 50종목 메타 동기화 / 단일 ticker → 1개만. yfinance UPSERT</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>가격 (F-PRICES)</h2>
+  <div class="card">
+    <div class="row"><div class="num">15</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/prices/<span class="param">{target}</span></div>
+      <div class="desc">최신 1일 OHLCV. target=all 또는 단일 ticker. yfinance fetch + UPSERT</div></div></div>
+    <div class="row"><div class="num">16</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/prices/sync-history/<span class="param">{target}</span>?period=1y <span class="tag cron">운영</span></div>
+      <div class="desc">OHLCV 히스토리 일괄 적재. period = 1mo / 3mo / 6mo / 1y / 2y / 5y / max</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>거시지표 (F-MACRO)</h2>
+  <div class="card">
+    <div class="row"><div class="num">17</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/macro/<span class="param">{code}</span></div>
+      <div class="desc">단일 시리즈 조회 (VIXCLS · DGS10 · UNRATE 등). 날짜별 시계열</div></div></div>
+    <div class="row"><div class="num">18</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/macro/sync/<span class="param">{target}</span>?lookback_days=400 <span class="tag cron">운영</span></div>
+      <div class="desc">FRED → DB 동기화. target=all 또는 단일 code</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>변동성 판결 (F-RISK)</h2>
+  <div class="card">
+    <div class="row"><div class="num">19</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/risk/sync/run-db-inference <span class="tag cron">운영</span></div>
+      <div class="desc">⭐ DB prices+macro → 서버 baseline 추론 → 50종목 predictions/grades/xai 저장. ~5초</div></div></div>
+    <div class="row"><div class="num">20</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/risk/sync/predictions <span class="tag cron">운영</span></div>
+      <div class="desc">외부 모델(TFT/Kronos) 결과 JSON 적재 — 19 quantile + XAI 한 페이로드</div></div></div>
+    <div class="row"><div class="num">21</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/risk/sync/run-inference <span class="tag cron">운영</span></div>
+      <div class="desc">ZERi-ai-model의 predict_kronos.py / predict_with_xai.py subprocess 호출 + 자동 적재</div></div></div>
+    <div class="row"><div class="num">22</div><div class="method post">POST</div><div class="body">
+      <div class="path">/v1/risk/sync/baseline <span class="tag cron">운영</span></div>
+      <div class="desc">레거시 — CSV 파일 경로로 적재</div></div></div>
+    <div class="row"><div class="num">23</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/risk/spotlight?scope=all|watchlist <span class="tag optional">선택</span></div>
+      <div class="desc">홈 — VOLATILITY_HIGH 중 worst 1종목. 30/min/IP</div></div></div>
+    <div class="row"><div class="num">24</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/risk/<span class="param">{ticker}</span>?record=true <span class="tag optional">선택</span></div>
+      <div class="desc">종합 verdict — grade + 19 quantile + XAI + 현재가. record=true + 인증이면 history INSERT</div></div></div>
+    <div class="row"><div class="num">25</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/risk/<span class="param">{ticker}</span>/path</div>
+      <div class="desc">fan chart 전용 — q05_path + q15_path (가벼운 응답)</div></div></div>
+    <div class="row"><div class="num">26</div><div class="method get">GET</div><div class="body">
+      <div class="path">/v1/risk/<span class="param">{ticker}</span>/attention</div>
+      <div class="desc">XAI 변수별 가중치 ("왜?" 버튼). 미생성 시 503 XAI_NOT_READY</div></div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>시스템</h2>
+  <div class="card">
+    <div class="row"><div class="num">27</div><div class="method get">GET</div><div class="body">
+      <div class="path">/health</div><div class="desc">헬스체크. Docker / UptimeRobot 용. /v1 prefix 없음</div></div></div>
+  </div>
+</section>
+
+<footer>ZERi-server · API quick spec · 2026-05-13 · 27 endpoints</footer>
+
+</div>
+</body>
+</html>

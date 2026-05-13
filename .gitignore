@@ -210,3 +210,14 @@ __marimo__/
 /data/*.csv
 
 .DS_Store
+
+# ZERi: 모델 산출물 / 학습 데이터는 ZERi-ai-model 에서 관리.
+# 서버 루트에 떨어진 파일은 임시 작업 산출물이라 보고 추적 안 함.
+/*.csv
+/*.ckpt
+/*.pt
+/*.pth
+/*.safetensors
+/*.onnx
+/*.npz
+/*.pkl
