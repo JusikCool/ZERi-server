@@ -10,6 +10,8 @@ class ErrorCode(str, Enum):
     TICKER_NOT_FOUND = "TICKER_NOT_FOUND"
     MACRO_NOT_FOUND = "MACRO_NOT_FOUND"
     PREDICTION_NOT_READY = "PREDICTION_NOT_READY"
+    XAI_NOT_READY = "XAI_NOT_READY"
+    ANALYSIS_NOT_FOUND = "ANALYSIS_NOT_FOUND"
     WATCHLIST_LIMIT_EXCEEDED = "WATCHLIST_LIMIT_EXCEEDED"
     WATCHLIST_DUPLICATE = "WATCHLIST_DUPLICATE"
     DISCLAIMER_REQUIRED = "DISCLAIMER_REQUIRED"
@@ -26,6 +28,8 @@ ERROR_HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.TICKER_NOT_FOUND: 404,
     ErrorCode.MACRO_NOT_FOUND: 404,
     ErrorCode.PREDICTION_NOT_READY: 503,
+    ErrorCode.XAI_NOT_READY: 503,
+    ErrorCode.ANALYSIS_NOT_FOUND: 404,
     ErrorCode.WATCHLIST_LIMIT_EXCEEDED: 422,
     ErrorCode.WATCHLIST_DUPLICATE: 409,
     ErrorCode.DISCLAIMER_REQUIRED: 403,
@@ -43,6 +47,8 @@ DEFAULT_ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.TICKER_NOT_FOUND: "해당 종목을 찾을 수 없습니다.",
     ErrorCode.MACRO_NOT_FOUND: "해당 거시지표를 찾을 수 없습니다.",
     ErrorCode.PREDICTION_NOT_READY: "예측 데이터 준비 중입니다.",
+    ErrorCode.XAI_NOT_READY: "XAI 설명 데이터 준비 중입니다.",
+    ErrorCode.ANALYSIS_NOT_FOUND: "해당 분석 기록을 찾을 수 없습니다.",
     ErrorCode.WATCHLIST_LIMIT_EXCEEDED: "워치리스트 등록 가능 한도를 초과했습니다.",
     ErrorCode.WATCHLIST_DUPLICATE: "이미 워치리스트에 추가된 종목입니다.",
     ErrorCode.DISCLAIMER_REQUIRED: "면책 동의가 필요합니다.",

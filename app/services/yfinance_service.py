@@ -85,6 +85,64 @@ async def fetch_latest_prices(tickers: list[str]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# OHLCV history (encoder window + 학습 데이터용)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_history_sync(
+    tickers: list[str], period: str = "1y"
+) -> list[dict[str, Any]]:
+    """동기. 종목별 OHLCV history 전체 추출.
+
+    period 예: "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"
+    Kronos encoder=60 / TFT encoder=60 + 5d buffer 라 "1y" 면 거뜬.
+    """
+    if not tickers:
+        return []
+
+    df = yf.download(
+        tickers=" ".join(tickers),
+        period=period,
+        progress=False,
+        auto_adjust=False,
+        group_by="ticker",
+        threads=True,
+    )
+    if df is None or df.empty:
+        logger.warning("yfinance returned empty frame for %d tickers", len(tickers))
+        return []
+
+    multi = isinstance(df.columns, pd.MultiIndex)
+    out: list[dict[str, Any]] = []
+
+    for t in tickers:
+        try:
+            sub = df[t] if multi else df
+            sub = sub.dropna(how="all")
+            if sub.empty:
+                continue
+            for idx, row in sub.iterrows():
+                d = _row_to_dict(t, idx, row)
+                if d:
+                    out.append(d)
+        except KeyError:
+            logger.warning("ticker %s missing from yfinance response", t)
+            continue
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ticker %s failed: %s", t, e)
+            continue
+
+    return out
+
+
+async def fetch_history_prices(
+    tickers: list[str], period: str = "1y"
+) -> list[dict[str, Any]]:
+    """비동기 wrapper. period 만큼 OHLCV history 일괄 fetch."""
+    return await asyncio.to_thread(_fetch_history_sync, tickers, period)
+
+
+# ---------------------------------------------------------------------------
 # 종목 메타데이터 (시가총액·통화 등) — 매일 변하므로 sync 라우트에서 사용
 # ---------------------------------------------------------------------------
 
