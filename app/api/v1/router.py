@@ -11,18 +11,20 @@ Convention (matches the spec §8 screen-to-API matrix):
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, macro, me, prices, risk, tickers, watchlist
+from app.api.v1.endpoints import (
+    auth, history, macro, me, prices, risk, tickers, watchlist,
+)
 
 api_router = APIRouter(prefix="/v1")
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(me.router, prefix="/me", tags=["me"])
-# watchlist는 /me/watchlist 하위 리소스 — me 라우터 다음에 등록.
+# /me 하위 리소스 — me 라우터 다음에 등록.
 api_router.include_router(watchlist.router, prefix="/me/watchlist", tags=["me"])
+api_router.include_router(history.router, prefix="/me/history", tags=["me"])
 api_router.include_router(prices.router, prefix="/prices", tags=["prices"])
 api_router.include_router(tickers.router, prefix="/tickers", tags=["tickers"])
 api_router.include_router(macro.router, prefix="/macro", tags=["macro"])
 api_router.include_router(risk.router, prefix="/risk", tags=["risk"])
 
-# 추후 단계에서 추가:
-# from app.api.v1.endpoints import history, models
+# 추후: F-MODEL 2개, F-HISTORY 의 outcome 평가 cron (POST /v1/history/evaluate)
