@@ -148,9 +148,12 @@ async def build_inference_panel(
         g = g.merge(ixic, on="Date", how="left")
         if not macro_wide.empty:
             g = g.merge(macro_wide.reset_index(), on="Date", how="left")
+            # 월별 매크로는 ffill → bfill 둘 다 적용:
+            # - ffill: 새 값 나오기 전까지 직전 값 유지 (정상)
+            # - bfill: 데이터 시작 시점에 매크로가 아직 없으면 다음 값으로 backfill
             for c in MACRO_CODES:
                 if c in g.columns:
-                    g[c] = g[c].ffill()
+                    g[c] = g[c].ffill().bfill()
                 else:
                     g[c] = np.nan
         else:
@@ -164,8 +167,8 @@ async def build_inference_panel(
         panels.append(g)
 
     panel = pd.concat(panels, ignore_index=True)
-    panel = panel.dropna(
-        subset=["Returns", "Realized_Vol_20d", "RSI_14", "ATR_14", "SMA_20"]
-    ).reset_index(drop=True)
+    # warmup NaN 제거 — 기술지표 + 매크로 둘 다 valid 해야 모델 input 으로 OK
+    drop_cols = ["Returns", "Realized_Vol_20d", "RSI_14", "ATR_14", "SMA_20"] + MACRO_CODES
+    panel = panel.dropna(subset=drop_cols).reset_index(drop=True)
     panel["time_idx"] = panel.groupby("group_id").cumcount()
     return panel

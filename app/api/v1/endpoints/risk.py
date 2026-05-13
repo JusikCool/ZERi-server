@@ -34,6 +34,8 @@ from app.schemas.risk import (
     RunDbInferenceRequest,
     RunInferenceData,
     RunInferenceRequest,
+    RunTftM3Data,
+    RunTftM3Request,
     SpotlightData,
     SyncBaselineData,
     SyncBaselineRequest,
@@ -43,6 +45,7 @@ from app.schemas.risk import (
 from app.services import risk_query_service
 from app.services.feature_engineering import MARKET_INDEX_TICKERS
 from app.services.risk_inference_baseline import run_baseline_inference
+from app.services.tft_m3_inference import run_tft_m3_inference
 from app.services.risk_ingest_service import (
     ingest_predictions_from_csv,
     ingest_predictions_from_json,
@@ -86,6 +89,68 @@ async def sync_baseline(
             predictions_upserted=n_pred,
             risk_grades_upserted=n_grade,
             xai_inserted=n_xai,
+            model_name=payload.model_name,
+            model_version=payload.model_version,
+        )
+    )
+
+
+# ---- POST /sync/run-tft-m3 (DB → 진짜 TFT m3 추론 → 저장) -----------------
+
+
+@router.post(
+    "/sync/run-tft-m3",
+    response_model=ApiResponse[RunTftM3Data],
+    summary=(
+        "DB(prices+macro) → m3.ckpt 직접 추론 → predictions/risk_grades/xai 저장. "
+        "서버 내장 모델 (app/ml/m3_tft + models/m3.ckpt). 외부 의존성 0."
+    ),
+)
+async def sync_run_tft_m3(
+    payload: RunTftM3Request,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[RunTftM3Data]:
+    inference = await run_tft_m3_inference(
+        session,
+        base_date=payload.base_date,
+        horizon_days=payload.horizon_days,
+    )
+    n_with_data = len(inference["items"])
+
+    class _ItemAdapter:
+        def __init__(self, d):
+            self.ticker = d["ticker"]
+            self.paths = d["paths"]
+            xai = d.get("xai_features")
+            self.xai_features = [_XaiAdapter(x) for x in xai] if xai else None
+
+    class _XaiAdapter:
+        def __init__(self, d):
+            self.feature = d["feature"]
+            self.weight = d["weight"]
+            self.label = d.get("label")
+
+    adapted = [_ItemAdapter(it) for it in inference["items"]]
+    n_pred, n_grade, n_xai, skipped = await ingest_predictions_from_json(
+        session,
+        base_date=inference["base_date"],
+        horizon_days=inference["horizon_days"],
+        quantile_levels=inference["quantile_levels"],
+        items=adapted,
+        model_name=payload.model_name,
+        model_version=payload.model_version,
+    )
+
+    return ApiResponse(
+        data=RunTftM3Data(
+            base_date=inference["base_date"],
+            horizon_days=inference["horizon_days"],
+            quantile_levels=inference["quantile_levels"],
+            n_tickers_with_data=n_with_data,
+            predictions_upserted=n_pred,
+            risk_grades_upserted=n_grade,
+            xai_inserted=n_xai,
+            skipped_tickers=skipped,
             model_name=payload.model_name,
             model_version=payload.model_version,
         )

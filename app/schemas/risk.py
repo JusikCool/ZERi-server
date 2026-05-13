@@ -40,6 +40,8 @@ __all__ = [
     "SyncPredictionsData",
     "RunDbInferenceRequest",
     "RunDbInferenceData",
+    "RunTftM3Request",
+    "RunTftM3Data",
 ]
 
 
@@ -310,6 +312,37 @@ class RunDbInferenceRequest(BaseModel):
 
 
 class RunDbInferenceData(BaseModel):
+    base_date: date
+    horizon_days: int
+    quantile_levels: list[float]
+    n_tickers_with_data: int
+    predictions_upserted: int
+    risk_grades_upserted: int
+    xai_inserted: int
+    skipped_tickers: list[str] = Field(default_factory=list)
+    model_name: str
+    model_version: str
+
+
+# ---- run-tft-m3 (서버 내장 TFT m3) ----------------------------------------
+
+
+class RunTftM3Request(BaseModel):
+    """DB → m3.ckpt 직접 추론 → 19 quantile + XAI 저장.
+
+    서버 안에 있는 app/ml/m3_tft 모델 코드 + models/m3.ckpt 사용.
+    외부 의존성 0.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_date: date | None = None
+    horizon_days: int | None = Field(default=None, ge=1, le=60)
+    model_name: str = "tft-m3"
+    model_version: str = "m3"
+
+
+class RunTftM3Data(BaseModel):
     base_date: date
     horizon_days: int
     quantile_levels: list[float]
