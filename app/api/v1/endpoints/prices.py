@@ -21,7 +21,7 @@ from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.db.models import Price, Ticker
 from app.schemas.common import ApiResponse
-from app.services.yfinance_service import fetch_latest_prices
+from app.services.yfinance_service import fetch_history_prices, fetch_latest_prices
 
 router = APIRouter()
 
@@ -57,7 +57,10 @@ async def _get_active_tickers(session: AsyncSession) -> dict[str, Ticker]:
 async def _upsert_prices(
     session: AsyncSession, raw: list[dict[str, Any]]
 ) -> None:
-    """yfinance OHLCV → prices 테이블 upsert. PK (trade_date, ticker)."""
+    """yfinance OHLCV → prices 테이블 upsert. PK (trade_date, ticker).
+
+    asyncpg prepared statement 인자 한도 = 32767. row 당 7 컬럼이라 안전 chunk = 4000행.
+    """
     if not raw:
         return
     payloads = [
@@ -72,18 +75,22 @@ async def _upsert_prices(
         }
         for r in raw
     ]
-    stmt = pg_insert(Price).values(payloads)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["trade_date", "ticker"],
-        set_={
-            "open_price": stmt.excluded.open_price,
-            "high_price": stmt.excluded.high_price,
-            "low_price": stmt.excluded.low_price,
-            "close_price": stmt.excluded.close_price,
-            "volume": stmt.excluded.volume,
-        },
-    )
-    await session.execute(stmt)
+
+    CHUNK = 4000
+    for i in range(0, len(payloads), CHUNK):
+        chunk = payloads[i : i + CHUNK]
+        stmt = pg_insert(Price).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["trade_date", "ticker"],
+            set_={
+                "open_price": stmt.excluded.open_price,
+                "high_price": stmt.excluded.high_price,
+                "low_price": stmt.excluded.low_price,
+                "close_price": stmt.excluded.close_price,
+                "volume": stmt.excluded.volume,
+            },
+        )
+        await session.execute(stmt)
     await session.commit()
 
 
@@ -141,5 +148,66 @@ async def get_prices(
             fetched=len(items),
             missing=missing,
             items=items,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# History sync — encoder window 채우는 용도 (추론 입력 데이터 적재)
+# ---------------------------------------------------------------------------
+
+
+class HistorySyncData(BaseModel):
+    target: str
+    period: str
+    requested_tickers: int
+    rows_inserted: int  # UPSERT 후 영향받은 행 (실제 INSERT + UPDATE 합)
+    first_date: date | None = None
+    last_date: date | None = None
+    missing: list[str] = Field(default_factory=list)
+
+
+@router.post(
+    "/sync-history/{target}",
+    response_model=ApiResponse[HistorySyncData],
+    summary=(
+        "OHLCV history 일괄 적재 — 추론 입력용. target=all 또는 단일 ticker. "
+        "period 기본 '1y' (yfinance period 표기: 1mo/3mo/6mo/1y/2y/5y/max)."
+    ),
+)
+async def sync_history(
+    target: str,
+    period: str = "1y",
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[HistorySyncData]:
+    target_upper = target.upper()
+    meta = await _get_active_tickers(session)
+
+    if target_upper == "ALL":
+        symbols = sorted(meta.keys())
+    else:
+        if target_upper not in meta:
+            raise AppException(
+                ErrorCode.TICKER_NOT_FOUND,
+                details={"ticker": target_upper},
+            )
+        symbols = [target_upper]
+
+    raw = await fetch_history_prices(symbols, period=period)
+    await _upsert_prices(session, raw)
+
+    fetched_tickers = {r["ticker"] for r in raw}
+    missing = [s for s in symbols if s not in fetched_tickers]
+    dates = [r["trade_date"] for r in raw]
+
+    return ApiResponse(
+        data=HistorySyncData(
+            target=target_upper,
+            period=period,
+            requested_tickers=len(symbols),
+            rows_inserted=len(raw),
+            first_date=min(dates) if dates else None,
+            last_date=max(dates) if dates else None,
+            missing=missing,
         )
     )
