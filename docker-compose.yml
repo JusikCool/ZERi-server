@@ -1,17 +1,23 @@
+# 운영 안전 default. dev 편의 옵션(--reload, DB 외부 노출)은 docker-compose.override.yml에
+# 분리돼 있어 `docker compose up`이면 자동 합쳐지고, 운영에서는 명시적으로 override를 제외한다:
+#   docker compose -f docker-compose.yml up -d
+#
+# 시크릿(POSTGRES_PASSWORD, JWT_SECRET)은 default 없이 ${VAR:?}로 강제 — 미설정 시 즉시 실패.
+
 services:
   db:
     image: postgres:16-alpine
     container_name: before-db
     environment:
-      POSTGRES_USER: before
-      POSTGRES_PASSWORD: before
-      POSTGRES_DB: before
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-before}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 환경변수가 필요합니다}
+      POSTGRES_DB: ${POSTGRES_DB:-before}
+    # 운영에서는 DB 포트를 호스트에 노출하지 않는다 — api 컨테이너만 내부 네트워크로 접근.
+    # 호스트에서 psql 직접 접근이 필요한 dev 환경은 docker-compose.override.yml에서 포트 노출.
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U before -d before"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-before} -d ${POSTGRES_DB:-before}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -19,12 +25,15 @@ services:
   api:
     build: .
     container_name: before-api
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload는 운영에서 절대 금지 (요청 중단 + watchfiles CPU 점유).
+    # dev 편의 옵션은 docker-compose.override.yml에서 추가.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
       ENV: ${ENV:-dev}
-      DATABASE_URL: postgresql+asyncpg://before:before@db:5432/before
-      # 평문 시크릿 박지 말 것 — .env 경유 (운영은 secret manager 사용)
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-before}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 환경변수가 필요합니다}@db:5432/${POSTGRES_DB:-before}
+      # JWT_SECRET은 dev 기본값 없이 강제 — 운영에 dev 시크릿이 새는 사고 방지.
+      # dev에서는 docker-compose.override.yml이 안전한 dev 값을 주입.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 환경변수가 필요합니다 — openssl rand -hex 32 권장}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRES_IN: ${ACCESS_TOKEN_EXPIRES_IN:-3600}
       REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-1209600}
@@ -32,7 +41,7 @@ services:
       FRED_API_KEY: ${FRED_API_KEY}
     volumes:
       - ./:/app
-      # Keep the image's linux .venv alive under the bind mount, off the host filesystem.
+      # 컨테이너 내부 linux .venv를 호스트 bind mount로 덮어쓰지 않도록 named volume.
       - apivenv:/app/.venv
     ports:
       - "8000:8000"

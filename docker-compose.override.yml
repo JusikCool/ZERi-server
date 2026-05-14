@@ -1,0 +1,16 @@
+# dev 전용 편의 옵션. `docker compose up`이면 자동 합쳐짐.
+# 운영에서는 이 파일 없이 실행:
+#   docker compose -f docker-compose.yml up -d
+#
+# 시크릿(POSTGRES_PASSWORD/JWT_SECRET)은 dev든 prod든 .env에서 가져옴 — 본 override는
+# 부팅 옵션·포트 노출만 책임진다.
+
+services:
+  db:
+    # 호스트에서 psql -h localhost로 직접 접근 가능하도록 포트 노출 (dev 한정).
+    ports:
+      - "5432:5432"
+
+  api:
+    # 코드 변경 시 자동 재시작 — 운영에서는 절대 금지 (요청 중단 + watchfiles CPU).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

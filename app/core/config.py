@@ -1,6 +1,26 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 운영(prod)에서 절대 사용하면 안 되는 약한 시크릿 값들.
+# .env에 깜빡 잊고 dev default가 그대로 prod에 들어가면 토큰 위조가 가능해지므로
+# 부팅 단계에서 실패시킴 — 컨테이너가 unhealthy로 떨어지면서 잘못된 배포를 알 수 있다.
+_UNSAFE_JWT_SECRETS: frozenset[str] = frozenset(
+    {
+        "",
+        "change-me",
+        "dev-secret-change-me",
+        "change-me-use-openssl-rand-hex-32",
+        "secret",
+        "password",
+        "test",
+    }
+)
+
+
+def _is_prod_env(env_value: str) -> bool:
+    return env_value.lower() in {"prod", "production", "live"}
 
 
 class Settings(BaseSettings):
@@ -39,6 +59,44 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.env == "dev"
+
+    @property
+    def is_prod(self) -> bool:
+        return _is_prod_env(self.env)
+
+    @model_validator(mode="after")
+    def _enforce_prod_safety(self) -> "Settings":
+        """운영(prod) 환경에서 약한 시크릿/와일드카드 CORS 사용을 차단.
+
+        의도적으로 부팅 단계에서 RuntimeError를 던져 컨테이너가 healthy로 떠 잘못 배포되는
+        것을 막는다. dev 환경에서는 그대로 통과.
+        """
+        if not self.is_prod:
+            return self
+
+        if self.jwt_secret in _UNSAFE_JWT_SECRETS:
+            raise RuntimeError(
+                "운영(prod) 환경에서 dev/기본 JWT_SECRET을 사용할 수 없습니다. "
+                "환경변수 JWT_SECRET을 `openssl rand -hex 32`로 생성한 값으로 설정하세요."
+            )
+
+        if len(self.jwt_secret) < 32:
+            raise RuntimeError(
+                "운영(prod) 환경의 JWT_SECRET은 최소 32자 이상이어야 합니다. "
+                "`openssl rand -hex 32` 권장."
+            )
+
+        if "*" in self.cors_origins_list:
+            raise RuntimeError(
+                "운영(prod) 환경에서 CORS_ORIGINS에 와일드카드(*)를 사용할 수 없습니다."
+            )
+
+        if not self.cors_origins_list:
+            raise RuntimeError(
+                "운영(prod) 환경의 CORS_ORIGINS는 명시적으로 도메인을 지정해야 합니다."
+            )
+
+        return self
 
 
 @lru_cache
