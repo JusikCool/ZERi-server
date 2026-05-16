@@ -260,7 +260,7 @@ endpoint → service.fetch_*  → external API
 
 ---
 
-## 11. JWT refresh token rotation + family invalidation
+## 12. JWT refresh token rotation + family invalidation
 
 **문제**
 JWT는 stateless라 발급 후 회수가 불가. logout이 의미를 가지려면 서버측 무력화 메커니즘이 필요. 단순히 jti를 DB에 저장하고 logout 시 revoke하는 것만으로는 **토큰 탈취 시 정상 사용자가 탈취 사실을 인지할 방법이 없음**.
@@ -287,7 +287,7 @@ if db_token.revoked_at is not None:
 
 ---
 
-## 12. timing-attack 평탄화
+## 13. timing-attack 평탄화
 
 **문제**
 로그인 핸들러에서 "이메일 없음" 분기가 "비밀번호 틀림" 분기보다 빠르게 끝나면, 응답 시간 차이로 **사용자 존재 여부를 추론**하는 계정 열거 공격 가능.
@@ -310,7 +310,7 @@ if user is None or user.password_hash is None:
 
 ---
 
-## 13. 회원가입 + 면책 동의 단일 트랜잭션
+## 14. 회원가입 + 면책 동의 단일 트랜잭션
 
 **문제**
 자본시장법 §69는 투자 정보 제공 시 면책 동의 증빙(IP, 시각, 동의 코드)을 요구. user는 만들어졌는데 disclaimer_ack가 누락되면 컴플라이언스 사고.
@@ -333,7 +333,7 @@ await session.commit()
 
 ---
 
-## 14. 비밀번호 정책: 정책 모듈 분리
+## 15. 비밀번호 정책: 정책 모듈 분리
 
 **문제**
 Pydantic Field 제약(`min_length=8`)만으로는 약한 비밀번호(`password123`, `aaaaaaaa`)를 막을 수 없음. zxcvbn 같은 풀 분석은 의존성 부담 + 한국어 컨텍스트에 약함.
@@ -358,7 +358,7 @@ def validate_password(password, *, email=None, name=None) -> None:
 
 ---
 
-## 15. 격리된 schema fixture로 테스트 DB 분리
+## 16. 격리된 schema fixture로 테스트 DB 분리
 
 **문제**
 별도 테스트 DB를 띄우면 마이그레이션 동기화 부담. 같은 DB를 공유하면 테스트 간 상태 누수.
@@ -386,7 +386,158 @@ async def db_session(db_schema):
 
 ---
 
-## 정리 — 데이터 인제스트 + 인증 도메인에서 일반화 가능한 원칙
+## 17. ML 추론을 서버 안에 내장 — Lightning checkpoint 직접 로드
+
+**문제**
+v2 단계에선 추론을 외부 스크립트(`ZERi-ai-model/predict_with_xai.py`)로 돌리고 결과 CSV를 받아 적재했음. 이 분리는 두 가지 단점이 있었다:
+- 학부생 환경 ↔ 운영 환경에서 동일한 결과 보장이 어려움 (Python 버전, 패키지 버전, OS 차이)
+- 운영 배포 시 외부 스크립트 + venv + 권한이 별도 의존성으로 따라옴
+- 매번 CSV 파일 위치를 협의해야 함 (파일 시스템 의존)
+
+**선택한 패턴**
+모델 코드(`app/ml/m3_tft/`)와 가중치(`models/m3.ckpt`)를 서버 레포에 함께 둠. FastAPI에서 직접 PyTorch 로드 → 추론 → DB 적재까지 단일 트랜잭션으로 처리.
+
+`POST /v1/risk/sync/run-tft-m3` 하나로:
+1. DB(prices + macro) → 입력 panel 빌드
+2. ckpt 로드 + Adaptive Pinball Loss 헤드 부착
+3. 50종목 배치 추론
+4. predictions / risk_grades / xai_explanations 모두 UPSERT
+
+```python
+ckpt = torch.load(DEFAULT_CKPT_PATH, map_location="cpu")
+model.load_state_dict(ckpt["state_dict"], strict=False)
+inference = await run_tft_m3_inference(session, base_date=base_date)
+await ingest_predictions_from_json(session, ..., items=inference["items"])
+```
+
+**효과**
+- 운영 배포 단순화 — Docker 이미지 하나에 inference extras까지 묶여 외부 의존성 0
+- 단일 인스턴스에서 DB→추론→저장이 한 흐름 — 부분 실패 시 트랜잭션 단위 rollback
+- ckpt 만 외부 채널로 공유하면 끝 (.gitignore 적용. 부채 항목으로 따로 기록)
+- 외부 스크립트 변형(`run-inference`)도 같은 적재 코어(`ingest_predictions_from_json`)를 재사용 → 결과 적재 책임이 한 곳
+
+---
+
+## 18. XAI 변수 가중치 파이핑 — 모델 출력에서 응답까지 단일 진실의 원천
+
+**문제**
+TFT의 VSN(Variable Selection Network) 출력은 텐서 형태. 이걸 UI 카드에 "VIX 38%" 처럼 띄우려면 (a) 모델 추론에서 추출 (b) DB JSON 저장 (c) 응답 DTO 변환 — 세 곳에서 형태 일관성이 필요함.
+
+**선택한 패턴**
+하나의 dict 스키마 — `{feature, weight, label}` — 를 세 레이어가 모두 공유. inference 모듈이 `interpret_output()` 결과에서 top-N을 dict 리스트로 만들고, 그대로 `xai_explanations.features` JSONB 컬럼에 저장. 응답 직렬화에선 동일 키만 매핑.
+
+```python
+def _xai_features(interp, encoder_vars, top_n=3) -> list[dict]:
+    imp = interp["encoder_variables"].detach().cpu().numpy().flatten()
+    ranked = sorted(zip(encoder_vars[:n], imp[:n]), key=lambda x: -float(x[1]))[:top_n]
+    return [
+        {"feature": name, "weight": float(w), "label": _LABEL_KR.get(name, name)}
+        for name, w in ranked
+    ]
+```
+
+**효과**
+- 새 변수가 추론 입력에 추가될 때 코드 변경은 _LABEL_KR 키 추가 1줄 + 템플릿 1줄 (xai_templates) — 응답 스키마 / DB 마이그레이션 무수정
+- DB에 저장된 row 가 그대로 API 응답으로 흘러감 → 디버깅 시 DB 직접 조회 = 사용자가 본 것과 동일
+- 모델 백엔드를 Kronos 로 교체해도 같은 dict 스키마만 만들면 됨 — 적재·응답 코드 무수정
+
+---
+
+## 19. UI 카피를 모델 코드에서 분리 — `xai_templates.py`
+
+**문제**
+화면 04 "핵심 영향 변수" 카드의 자연어 설명 ("VIX — 시장 전반의 공포·기대 변동성을 측정합니다") 을 어디에 둘지가 미묘. 후보 셋:
+- 모델 inference 코드 → 변동성 추적 + 자본시장법 워딩 검토 시 모델 재학습 의심받기 쉬움
+- 응답 DTO 정의 → 카피가 DTO에 박혀 다국어/리브랜딩 대응 어려움
+- 프론트 i18n → 백엔드가 변수별 한국어 라벨을 갖고 있는 게 더 자연스러움 (DB의 indicator_code 가 영문이라)
+
+**선택한 패턴**
+`app/services/xai_templates.py` 라는 별도 모듈에 두 가지를 모음:
+- `feature_description(feature, label)` — 변수별 1문장 설명
+- `build_summary_narrative(grade, worst_case_pct, top_features, horizon_days)` — verdict 카드 상단의 narrative 1줄
+
+워딩은 "사실/관측" 진술만 — 매수·매도 권유 표현 0. 자본시장법 §69 가이드.
+
+```python
+_FEATURE_TEMPLATES: dict[str, str] = {
+    "VIX_Close": "S&P 500 옵션 내재 변동성 지수(VIX) — 시장 전반의 공포·기대 변동성을 측정합니다.",
+    "RSI_14":    "14일 상대강도지수(RSI) — 70 이상은 통계적 과열, 30 이하는 과매도 구간으로 해석됩니다.",
+    ...
+}
+
+_GRADE_PHRASE = {
+    "VOLATILITY_HIGH": "과거 분포 상위 5% 구간에 해당하는 통계적 고변동성 구간",
+    ...
+}
+```
+
+**효과**
+- 워딩 수정이 모델/DB와 분리됨 — 카피라이팅 만으로도 한 PR이 완결
+- 자본시장법 위반 위험 표현이 한 파일에 집중 → 법무 리뷰가 효율적
+- 새 모델/언어 추가 시 템플릿만 갈아끼움 — XAI 데이터 호환성 유지
+- 정적 dict 라 단위 테스트 쉬움 (HTTP 안 거치고 함수 호출만)
+
+---
+
+## 20. Top-N 상수를 두 레이어에서 동시 강제 — 추론 + 응답
+
+**문제**
+"핵심 영향 변수는 top 3 만 보여준다" 같은 정책을 한 군데에만 두면 두 위험 중 하나가 발생:
+- 추론에만 두면 → 정책 바꿔도 이미 DB 에 저장된 row 들이 옛 개수로 응답에 흘러감
+- 응답에만 두면 → DB 에 불필요한 row 가 쌓임, 저장 비용/통신 비용 낭비
+
+**선택한 패턴**
+두 곳 모두에 적용하되 의미를 다르게:
+- 추론 시점 (`tft_m3_inference._xai_features(top_n=3)`) — 저장 효율 (앞으로 들어가는 데이터)
+- 응답 시점 (`risk_query_service._TOP_FEATURES = 3`) — 표시 일관성 (과거 저장된 row 보호)
+
+```python
+# tft_m3_inference.py
+def _xai_features(interp, encoder_vars, top_n: int = 3) -> list[dict]: ...
+
+# risk_query_service.py
+_TOP_FEATURES = 3
+features = [... for f in (xai.features or [])[:_TOP_FEATURES]]
+```
+
+**효과**
+- 정책을 5/3/7로 바꿀 때 한 상수만 고치면 새 추론에 즉시 반영, 과거 데이터에도 즉시 반영
+- 기존 DB row 와의 호환성 보장 (예: 옛날 top_n=10 으로 저장된 row 도 응답은 top 3)
+- "왜 inference top_n 과 response slicing 이 두 군데 있냐"의 답이 명확 — 한쪽은 ingest, 한쪽은 read
+
+---
+
+## 21. 응답에 nullable 섹션을 명시적으로 — 미준비 상태와 정상의 분리
+
+**문제**
+verdict 응답에는 grade, prediction, XAI 세 섹션이 있는데 XAI 가 항상 같이 만들어지진 않음 (외부 CSV로 적재한 prediction 은 XAI 없을 수 있음). 어떻게 표현할지가 트레이드오프:
+- XAI 없으면 404 → 다른 섹션 못 받음, 호출자가 두 번 시도
+- XAI 없이 그냥 빈 배열 `[]` → "데이터가 비어있는지" vs "아직 안 만들어진지" 구분 불가
+- 별도 엔드포인트만 — `/attention` 503 으로 분리 → 빈번한 호출
+
+**선택한 패턴**
+세 가지 응답 형태를 명시적으로 디자인:
+
+```python
+class RiskVerdictData(BaseModel):
+    grade: RiskGradeSection                           # 항상 존재 (필수)
+    prediction: RiskPredictionSection                 # 항상 존재 (필수)
+    xai: RiskXaiSection | None = None                 # 없을 수 있음
+    summary_narrative: str | None = None              # xai 없으면 None
+```
+
+- verdict 호출은 XAI 유무와 무관하게 성공 (그 외 데이터는 받음)
+- 클라이언트가 "왜?" 카드를 그릴 필요 있을 때만 `/attention` 호출 → 503 XAI_NOT_READY 면 카드 비활성화
+- summary_narrative 도 XAI 의존이므로 같이 null
+
+**효과**
+- 화면 03 verdict 카드는 어떤 상태에서도 그려짐 — XAI 만 빠진 채라도 동작
+- "데이터 비어있음" vs "준비 안 됨" 의 의미 차이가 타입 시그니처에 직접 반영됨 (`list[...]` vs `... | None`)
+- 새 섹션 추가될 때 동일 패턴 적용 가능 (`backtest: BacktestSection | None`)
+
+---
+
+## 정리 — 데이터 인제스트 + 인증 + ML 추론 도메인에서 일반화 가능한 원칙
 
 1. **멱등성을 PK + ON CONFLICT로 자연스럽게 강제**
 2. **외부 IO는 어댑터 서비스로 격리** (테스트·재사용·관측성)
@@ -397,4 +548,9 @@ async def db_session(db_schema):
 7. **부채는 숨기지 말고 문서화** — 정직이 장기 신뢰를 만듦
 8. **컴플라이언스가 필요한 INSERT는 한 트랜잭션** — 이중 INSERT의 부분 실패가 가장 큰 컴플라이언스 위험
 9. **stateless를 안전하게 쓰려면 stateful 무력화 채널 필수** — JWT만으론 불충분, jti+family로 회수 가능성 확보
+10. **ML 모델은 서버에 내장하되 가중치만 외부 채널** — Docker 의존성 0 + 학습 사이클 분리
+11. **추론 출력 ↔ DB JSON ↔ API 응답이 같은 dict 스키마** — 한 변경이 한 곳에서 끝남
+12. **UI 카피는 모델 코드와 분리** — 카피 수정이 모델 재학습으로 오인되면 안 됨 (자본시장법 리뷰 효율)
+13. **정책 상수(top-N 등)는 ingest/read 양쪽에서 강제** — 과거 데이터와의 호환성을 한 상수로 통제
+14. **응답의 nullable 섹션은 의미 있는 분리** — "비어있음 ≠ 준비 안 됨"이 타입에 드러나야 함
 10. **응답 시간도 정보** — timing-attack 평탄화는 한 줄로 보안 등급을 한 단계 올림

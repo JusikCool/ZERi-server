@@ -94,6 +94,8 @@ class RiskXaiFeature(BaseModel):
     feature: str
     weight: float
     label: str
+    # 변수별 1문장 자연어 설명 (xai_templates). UI 화면 04 "핵심 영향 변수" 카드용.
+    description: str | None = None
 
 
 class RiskXaiSection(BaseModel):
@@ -111,6 +113,9 @@ class RiskVerdictData(BaseModel):
     prediction: RiskPredictionSection
     # XAI는 없을 수 있음. 없으면 None — 클라이언트가 attention endpoint 호출하면 503.
     xai: RiskXaiSection | None = None
+    # XAI top 변수 + grade/worst-case 기반 1문장 요약 (xai_templates).
+    # 화면 03 verdict 카드 narrative 라인용. xai 없으면 None.
+    summary_narrative: str | None = None
     # 인증 + record=true 일 때만 채워짐.
     analysis_id: int | None = None
 

@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BEFORE API 명세서</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #fafafa;
+  --paper: #ffffff;
+  --ink: #1a1a1a;
+  --text: #2c2c2c;
+  --muted: #6b6b6b;
+  --soft: #9a9a9a;
+  --rule: #e5e5e5;
+  --rule-2: #efefef;
+  --get: #047857;
+  --get-bg: #ecfdf5;
+  --post: #1d4ed8;
+  --post-bg: #eff6ff;
+  --patch: #c2410c;
+  --patch-bg: #fff7ed;
+  --delete: #b91c1c;
+  --delete-bg: #fef2f2;
+  --danger: #b91c1c;
+  --code-bg: #1e1e1e;
+  --code-fg: #d4d4d4;
+  --code-key: #9cdcfe;
+  --code-str: #ce9178;
+  --code-num: #b5cea8;
+  --code-bool: #569cd6;
+  --code-null: #569cd6;
+  --code-punct: #d4d4d4;
+}
+body {
+  font-family: 'Inter', 'Pretendard', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+.layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+aside {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--paper); border-right: 1px solid var(--rule);
+  padding: 32px 20px 40px 28px;
+}
+aside::-webkit-scrollbar { width: 4px; }
+aside::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 2px; }
+.brand { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.brand em { color: var(--post); font-style: normal; }
+.brand-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--soft); margin-top: 4px; padding-bottom: 18px;
+  border-bottom: 1px solid var(--rule); margin-bottom: 16px;
+}
+.nav-group {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--soft);
+  padding: 18px 0 4px;
+}
+.nav-a {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; color: var(--muted); text-decoration: none;
+  font-size: 12.5px; border-radius: 4px;
+}
+.nav-a:hover { background: var(--rule-2); color: var(--ink); }
+.nav-a .m {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+  padding: 1px 5px; border-radius: 2px; min-width: 32px; text-align: center;
+}
+.nav-a .m.get { background: var(--get-bg); color: var(--get); }
+.nav-a .m.post { background: var(--post-bg); color: var(--post); }
+.nav-a .m.patch { background: var(--patch-bg); color: var(--patch); }
+.nav-a .m.delete { background: var(--delete-bg); color: var(--delete); }
+
+main { padding: 56px 64px 120px; max-width: 1100px; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+  main { padding: 32px 24px 80px; }
+}
+
+h1 {
+  font-size: 38px; font-weight: 700; letter-spacing: -0.025em;
+  color: var(--ink); margin-bottom: 8px;
+}
+.lede {
+  font-size: 16px; color: var(--muted); margin-bottom: 28px;
+  max-width: 720px; line-height: 1.55;
+}
+.meta-row {
+  display: flex; gap: 24px; flex-wrap: wrap;
+  padding: 14px 20px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
+  font-size: 12.5px; color: var(--muted);
+  font-family: 'JetBrains Mono', monospace; letter-spacing: 0.01em;
+  margin-bottom: 48px;
+}
+.meta-row strong { color: var(--ink); font-weight: 600; }
+
+h2 {
+  font-size: 26px; font-weight: 700; letter-spacing: -0.018em;
+  color: var(--ink); margin-top: 64px; margin-bottom: 12px;
+  padding-bottom: 10px; border-bottom: 2px solid var(--ink);
+}
+h2 .h-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+  color: var(--post); margin-right: 14px; padding: 3px 8px;
+  background: var(--post-bg); border-radius: 3px; vertical-align: middle;
+}
+h3 {
+  font-size: 17px; font-weight: 600; letter-spacing: -0.012em;
+  color: var(--ink); margin-top: 28px; margin-bottom: 10px;
+}
+p { margin-bottom: 12px; }
+
+/* Envelope panel */
+.envelope {
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 22px 26px; margin: 18px 0 24px;
+}
+.envelope h4 {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  margin-bottom: 8px;
+}
+
+/* Endpoint card */
+.ep {
+  background: var(--paper); border: 1px solid var(--rule);
+  border-radius: 8px; margin-bottom: 24px; overflow: hidden;
+}
+.ep-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px; border-bottom: 1px solid var(--rule-2);
+  background: #fcfcfc;
+}
+.method {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 5px 10px; border-radius: 3px; min-width: 56px; text-align: center;
+}
+.method.get { background: var(--get-bg); color: var(--get); }
+.method.post { background: var(--post-bg); color: var(--post); }
+.method.patch { background: var(--patch-bg); color: var(--patch); }
+.method.delete { background: var(--delete-bg); color: var(--delete); }
+.ep-path {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px; font-weight: 600; color: var(--ink);
+  letter-spacing: 0.005em;
+}
+.ep-path .pp { color: var(--patch); }
+.ep-summary {
+  margin-left: auto; color: var(--muted);
+  font-size: 12.5px; max-width: 460px; text-align: right;
+}
+.ep-body { padding: 18px 22px 22px; }
+.ep-body p { color: var(--muted); margin-bottom: 14px; }
+.ep-body p code { color: var(--ink); }
+
+.ep-section-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--soft);
+  margin-top: 18px; margin-bottom: 8px;
+}
+
+.params {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+  margin-bottom: 14px;
+}
+.params th {
+  text-align: left; font-weight: 600; font-size: 11px;
+  color: var(--soft); letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule);
+}
+.params td {
+  padding: 9px 12px 9px 0; border-bottom: 1px solid var(--rule-2);
+  vertical-align: top;
+}
+.params td.k {
+  font-family: 'JetBrains Mono', monospace; color: var(--ink); font-weight: 500;
+  white-space: nowrap;
+}
+.params td.t {
+  font-family: 'JetBrains Mono', monospace; color: var(--post);
+  font-size: 12px;
+}
+.params td.r { color: var(--danger); font-size: 11px; font-weight: 600; }
+.params td.d { color: var(--muted); font-size: 12.5px; }
+
+/* Code block (JSON) */
+.code {
+  background: var(--code-bg); color: var(--code-fg);
+  border-radius: 6px; padding: 16px 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; line-height: 1.6;
+  overflow-x: auto; margin: 6px 0 14px;
+  white-space: pre;
+}
+.code .k { color: var(--code-key); }
+.code .s { color: var(--code-str); }
+.code .n { color: var(--code-num); }
+.code .b { color: var(--code-bool); }
+.code .c { color: #6a9955; }
+
+.code-label {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--soft); margin-bottom: 4px;
+}
+.code-label .pill {
+  padding: 2px 7px; border-radius: 2px; font-size: 9.5px;
+  background: var(--rule-2);
+}
+.code-label .pill.ok { background: var(--get-bg); color: var(--get); }
+.code-label .pill.err { background: var(--delete-bg); color: var(--delete); }
+
+/* Error table */
+.errors-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+  margin-top: 8px;
+}
+.errors-table th {
+  text-align: left; padding: 10px 12px;
+  background: #f6f6f6; color: var(--ink); font-weight: 600;
+  font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.errors-table td {
+  padding: 9px 12px; border-bottom: 1px solid var(--rule-2);
+  vertical-align: top; color: var(--text);
+}
+.errors-table td.c {
+  font-family: 'JetBrains Mono', monospace; color: var(--danger);
+  font-weight: 500; font-size: 12px;
+}
+.errors-table td.s {
+  font-family: 'JetBrains Mono', monospace; color: var(--ink);
+  font-size: 12px;
+}
+
+.note {
+  background: var(--post-bg); border-left: 3px solid var(--post);
+  padding: 12px 16px; border-radius: 0 4px 4px 0;
+  font-size: 13px; margin: 12px 0;
+}
+.note strong { color: var(--ink); }
+.note.warn { background: var(--patch-bg); border-color: var(--patch); }
+.note.danger { background: var(--delete-bg); border-color: var(--delete); }
+
+footer {
+  margin-top: 88px; padding-top: 24px; border-top: 2px solid var(--ink);
+  display: flex; justify-content: space-between; flex-wrap: wrap;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--soft); letter-spacing: 0.04em;
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<aside>
+  <div class="brand">BEFORE<em>.</em></div>
+  <div class="brand-sub">API Spec · v0.1 · 2026.05</div>
+
+  <div class="nav-group">개요</div>
+  <a class="nav-a" href="#overview"><span class="m">DOC</span>응답 envelope·인증</a>
+  <a class="nav-a" href="#errors"><span class="m">ERR</span>에러 코드</a>
+
+  <div class="nav-group">/v1/auth</div>
+  <a class="nav-a" href="#auth-signup"><span class="m post">POST</span>/auth/signup</a>
+  <a class="nav-a" href="#auth-login"><span class="m post">POST</span>/auth/login</a>
+  <a class="nav-a" href="#auth-refresh"><span class="m post">POST</span>/auth/refresh</a>
+  <a class="nav-a" href="#auth-logout"><span class="m post">POST</span>/auth/logout</a>
+
+  <div class="nav-group">/v1/me</div>
+  <a class="nav-a" href="#me-get"><span class="m get">GET</span>/me</a>
+  <a class="nav-a" href="#me-patch"><span class="m patch">PATCH</span>/me</a>
+  <a class="nav-a" href="#me-delete"><span class="m delete">DEL</span>/me</a>
+  <a class="nav-a" href="#me-ack"><span class="m post">POST</span>/me/disclaimer-ack</a>
+
+  <div class="nav-group">/v1/me/watchlist</div>
+  <a class="nav-a" href="#wl-list"><span class="m get">GET</span>/me/watchlist</a>
+  <a class="nav-a" href="#wl-add"><span class="m post">POST</span>/me/watchlist</a>
+  <a class="nav-a" href="#wl-del"><span class="m delete">DEL</span>/me/watchlist/{t}</a>
+
+  <div class="nav-group">/v1/me/history</div>
+  <a class="nav-a" href="#hist-list"><span class="m get">GET</span>/me/history</a>
+  <a class="nav-a" href="#hist-stats"><span class="m get">GET</span>/me/history/stats</a>
+  <a class="nav-a" href="#hist-detail"><span class="m get">GET</span>/me/history/{id}</a>
+
+  <div class="nav-group">/v1/tickers</div>
+  <a class="nav-a" href="#tk-list"><span class="m get">GET</span>/tickers</a>
+  <a class="nav-a" href="#tk-search"><span class="m get">GET</span>/tickers/search</a>
+  <a class="nav-a" href="#tk-sync"><span class="m post">POST</span>/tickers/sync/{t}</a>
+
+  <div class="nav-group">/v1/prices</div>
+  <a class="nav-a" href="#px-get"><span class="m get">GET</span>/prices/{t}</a>
+  <a class="nav-a" href="#px-sync"><span class="m post">POST</span>/prices/sync-history/{t}</a>
+
+  <div class="nav-group">/v1/macro</div>
+  <a class="nav-a" href="#mc-get"><span class="m get">GET</span>/macro/{code}</a>
+  <a class="nav-a" href="#mc-sync"><span class="m post">POST</span>/macro/sync/{t}</a>
+
+  <div class="nav-group">/v1/risk</div>
+  <a class="nav-a" href="#rk-spotlight"><span class="m get">GET</span>/risk/spotlight</a>
+  <a class="nav-a" href="#rk-verdict"><span class="m get">GET</span>/risk/{t}</a>
+  <a class="nav-a" href="#rk-path"><span class="m get">GET</span>/risk/{t}/path</a>
+  <a class="nav-a" href="#rk-attention"><span class="m get">GET</span>/risk/{t}/attention</a>
+  <a class="nav-a" href="#rk-tft"><span class="m post">POST</span>/risk/sync/run-tft-m3</a>
+  <a class="nav-a" href="#rk-baseline"><span class="m post">POST</span>/risk/sync/baseline</a>
+  <a class="nav-a" href="#rk-predictions"><span class="m post">POST</span>/risk/sync/predictions</a>
+</aside>
+
+<main>
+
+<h1>BEFORE API 명세서</h1>
+<p class="lede">
+  v1 endpoint 일람과 요청/응답 JSON 예시. 모든 응답은 공통 envelope (<code>data</code> / <code>meta</code>) 로 감싸지며,
+  에러는 <code>error</code> envelope 로 반환된다.
+</p>
+
+<div class="meta-row">
+  <span>Base URL · <strong>https://api.before.app</strong></span>
+  <span>버전 · <strong>v1 (prefix: /v1)</strong></span>
+  <span>인증 · <strong>Bearer JWT (HS256)</strong></span>
+  <span>Content-Type · <strong>application/json</strong></span>
+</div>
+
+<!-- ============== OVERVIEW ============== -->
+<section id="overview">
+<h2><span class="h-num">DOC</span>응답 envelope · 인증</h2>
+
+<p>모든 응답은 다음 두 가지 envelope 중 하나다.</p>
+
+<div class="envelope">
+<h4>성공 envelope</h4>
+<div class="code-label"><span class="pill ok">200 OK</span>application/json</div>
+<div class="code">{
+  <span class="k">"data"</span>: { <span class="c">// endpoint 별 응답 페이로드</span> },
+  <span class="k">"meta"</span>: {
+    <span class="k">"request_id"</span>: <span class="s">"req_8a3f2e919c5b4d72a3e1"</span>,
+    <span class="k">"ts"</span>: <span class="s">"2026-05-15T12:34:56Z"</span>,
+    <span class="k">"next_cursor"</span>: <span class="b">null</span>
+  }
+}</div>
+</div>
+
+<div class="envelope">
+<h4>에러 envelope</h4>
+<div class="code-label"><span class="pill err">4xx · 5xx</span>application/json</div>
+<div class="code">{
+  <span class="k">"error"</span>: {
+    <span class="k">"code"</span>: <span class="s">"TICKER_NOT_FOUND"</span>,
+    <span class="k">"message"</span>: <span class="s">"해당 종목을 찾을 수 없습니다."</span>,
+    <span class="k">"details"</span>: { <span class="k">"ticker"</span>: <span class="s">"ZZZZ"</span> }
+  },
+  <span class="k">"meta"</span>: {
+    <span class="k">"request_id"</span>: <span class="s">"req_a2c1..."</span>,
+    <span class="k">"ts"</span>: <span class="s">"2026-05-15T12:34:56Z"</span>
+  }
+}</div>
+</div>
+
+<h3>인증 (Bearer)</h3>
+<p>로그인 후 받은 <code>access_token</code> 을 모든 인증 필요 요청의 헤더에 포함한다.</p>
+<div class="code"><span class="k">Authorization</span>: Bearer eyJhbGciOiJIUzI1NiIs...</div>
+
+<p>토큰이 만료되면 <code>401 TOKEN_EXPIRED</code> 가 떨어진다. 이때 <code>refresh_token</code> 으로
+<code>POST /v1/auth/refresh</code> 호출해 새 페어를 받는다 (회전 방식 — 옛 refresh 는 revoke).</p>
+</section>
+
+<!-- ============== ERRORS ============== -->
+<section id="errors">
+<h2><span class="h-num">ERR</span>에러 코드 일람</h2>
+
+<table class="errors-table">
+<thead><tr><th>code</th><th>status</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="c">INVALID_PARAMETER</td><td class="s">400</td><td>요청 페이로드 검증 실패</td></tr>
+<tr><td class="c">UNAUTHORIZED</td><td class="s">401</td><td>인증 누락 또는 잘못된 토큰</td></tr>
+<tr><td class="c">TOKEN_EXPIRED</td><td class="s">401</td><td>access 토큰 만료 → refresh 호출 필요</td></tr>
+<tr><td class="c">INVALID_CREDENTIALS</td><td class="s">401</td><td>로그인 실패 (이메일·비밀번호 불일치)</td></tr>
+<tr><td class="c">DISCLAIMER_REQUIRED</td><td class="s">403</td><td>면책 동의 필요</td></tr>
+<tr><td class="c">TICKER_NOT_FOUND</td><td class="s">404</td><td>종목 미존재 또는 비활성</td></tr>
+<tr><td class="c">MACRO_NOT_FOUND</td><td class="s">404</td><td>거시지표 미존재</td></tr>
+<tr><td class="c">ANALYSIS_NOT_FOUND</td><td class="s">404</td><td>분석 기록 미존재 또는 타인 소유</td></tr>
+<tr><td class="c">EMAIL_DUPLICATE</td><td class="s">409</td><td>이미 가입된 이메일</td></tr>
+<tr><td class="c">WATCHLIST_DUPLICATE</td><td class="s">409</td><td>이미 워치리스트에 추가됨</td></tr>
+<tr><td class="c">WATCHLIST_LIMIT_EXCEEDED</td><td class="s">422</td><td>워치리스트 한도(100개) 초과</td></tr>
+<tr><td class="c">RATE_LIMIT_EXCEEDED</td><td class="s">429</td><td>요청 빈도 제한 초과</td></tr>
+<tr><td class="c">PREDICTION_NOT_READY</td><td class="s">503</td><td>예측 데이터 없음 (추론 미실행 종목)</td></tr>
+<tr><td class="c">XAI_NOT_READY</td><td class="s">503</td><td>XAI 미생성 (해당 종목 XAI 적재 안 됨)</td></tr>
+<tr><td class="c">INTERNAL_ERROR</td><td class="s">500</td><td>서버 내부 오류</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ============== AUTH ============== -->
+<h2><span class="h-num">AUTH</span>/v1/auth</h2>
+
+<div class="ep" id="auth-signup">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/auth/signup</span>
+  <span class="ep-summary">회원가입 + 면책 동의 동시 기록</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{
+  <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>,
+  <span class="k">"password"</span>: <span class="s">"strong-passw0rd!"</span>,
+  <span class="k">"name"</span>: <span class="s">"유진"</span>,
+  <span class="k">"disclaimer_code"</span>: <span class="s">"MAIN_V1"</span>
+}</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"user"</span>: {
+      <span class="k">"user_id"</span>: <span class="n">42</span>,
+      <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>,
+      <span class="k">"name"</span>: <span class="s">"유진"</span>,
+      <span class="k">"created_at"</span>: <span class="s">"2026-05-15T12:34:56Z"</span>
+    },
+    <span class="k">"tokens"</span>: {
+      <span class="k">"access_token"</span>: <span class="s">"eyJhbGciOiJIUzI1NiIs..."</span>,
+      <span class="k">"refresh_token"</span>: <span class="s">"eyJhbGciOiJIUzI1NiIs..."</span>,
+      <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+      <span class="k">"access_expires_at"</span>: <span class="s">"2026-05-15T13:34:56Z"</span>,
+      <span class="k">"refresh_expires_at"</span>: <span class="s">"2026-05-29T12:34:56Z"</span>
+    }
+  },
+  <span class="k">"meta"</span>: { <span class="k">"request_id"</span>: <span class="s">"req_..."</span>, <span class="k">"ts"</span>: <span class="s">"..."</span> }
+}</div>
+
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">EMAIL_DUPLICATE</td><td class="s">409</td><td>이미 가입된 이메일</td></tr>
+<tr><td class="c">INVALID_PARAMETER</td><td class="s">400</td><td>password &lt; 8자 등</td></tr>
+</table>
+</div>
+</div>
+
+<div class="ep" id="auth-login">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/auth/login</span>
+  <span class="ep-summary">이메일+비밀번호 → access/refresh 페어 발급</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{
+  <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>,
+  <span class="k">"password"</span>: <span class="s">"strong-passw0rd!"</span>
+}</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"user"</span>: { <span class="k">"user_id"</span>: <span class="n">42</span>, <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>, <span class="k">"name"</span>: <span class="s">"유진"</span>, <span class="k">"created_at"</span>: <span class="s">"2026-04-01T10:00:00Z"</span> },
+    <span class="k">"tokens"</span>: {
+      <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>,
+      <span class="k">"refresh_token"</span>: <span class="s">"eyJ..."</span>,
+      <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>,
+      <span class="k">"access_expires_at"</span>: <span class="s">"2026-05-15T13:34:56Z"</span>,
+      <span class="k">"refresh_expires_at"</span>: <span class="s">"2026-05-29T12:34:56Z"</span>
+    }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">INVALID_CREDENTIALS</td><td class="s">401</td><td>이메일/비밀번호 불일치</td></tr>
+</table>
+</div>
+</div>
+
+<div class="ep" id="auth-refresh">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/auth/refresh</span>
+  <span class="ep-summary">refresh 회전 — 옛 토큰 revoke + 새 페어</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{ <span class="k">"refresh_token"</span>: <span class="s">"eyJhbGciOiJIUzI1NiIs..."</span> }</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"tokens"</span>: { <span class="k">"access_token"</span>: <span class="s">"eyJ..."</span>, <span class="k">"refresh_token"</span>: <span class="s">"eyJ..."</span>, <span class="k">"token_type"</span>: <span class="s">"Bearer"</span>, <span class="k">"access_expires_at"</span>: <span class="s">"..."</span>, <span class="k">"refresh_expires_at"</span>: <span class="s">"..."</span> }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="auth-logout">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/auth/logout</span>
+  <span class="ep-summary">refresh 토큰 revoke</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{ <span class="k">"refresh_token"</span>: <span class="s">"eyJ..."</span> }</div>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{ <span class="k">"data"</span>: { <span class="k">"revoked"</span>: <span class="b">true</span> }, <span class="k">"meta"</span>: { ... } }</div>
+</div>
+</div>
+
+<!-- ============== ME ============== -->
+<h2><span class="h-num">ME</span>/v1/me</h2>
+
+<div class="ep" id="me-get">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/me</span>
+  <span class="ep-summary">현재 로그인 사용자 프로필 (인증 필요)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"user"</span>: {
+      <span class="k">"user_id"</span>: <span class="n">42</span>,
+      <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>,
+      <span class="k">"name"</span>: <span class="s">"유진"</span>,
+      <span class="k">"created_at"</span>: <span class="s">"2026-04-01T10:00:00Z"</span>
+    }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="me-patch">
+<div class="ep-head">
+  <span class="method patch">PATCH</span>
+  <span class="ep-path">/v1/me</span>
+  <span class="ep-summary">이름 / 비밀번호 변경 (부분 갱신)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body (모든 필드 선택)</div>
+<div class="code">{
+  <span class="k">"name"</span>: <span class="s">"유진 (변경)"</span>,
+  <span class="k">"current_password"</span>: <span class="s">"old-passw0rd!"</span>,
+  <span class="k">"new_password"</span>: <span class="s">"new-passw0rd!"</span>
+}</div>
+  <p class="ep-section-title">설명</p>
+  <p>비밀번호 변경 시 <code>current_password</code> + <code>new_password</code> 둘 다 필수.
+     이름만 바꿀 땐 <code>name</code> 만.</p>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: { <span class="k">"user"</span>: { <span class="k">"user_id"</span>: <span class="n">42</span>, <span class="k">"email"</span>: <span class="s">"yujin@example.com"</span>, <span class="k">"name"</span>: <span class="s">"유진 (변경)"</span>, <span class="k">"created_at"</span>: <span class="s">"..."</span> } },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="me-delete">
+<div class="ep-head">
+  <span class="method delete">DELETE</span>
+  <span class="ep-path">/v1/me</span>
+  <span class="ep-summary">회원 탈퇴 (soft-delete + refresh 전부 revoke)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: { <span class="k">"deleted"</span>: <span class="b">true</span>, <span class="k">"deleted_at"</span>: <span class="s">"2026-05-15T12:34:56Z"</span> },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="me-ack">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/me/disclaimer-ack</span>
+  <span class="ep-summary">면책 동의 (재동의 시 새 행 INSERT)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{ <span class="k">"disclaimer_code"</span>: <span class="s">"MAIN_V1"</span> }</div>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: { <span class="k">"ack_id"</span>: <span class="n">71</span>, <span class="k">"disclaimer_code"</span>: <span class="s">"MAIN_V1"</span>, <span class="k">"acknowledged_at"</span>: <span class="s">"2026-05-15T12:34:56Z"</span> },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<!-- ============== WATCHLIST ============== -->
+<h2><span class="h-num">WL</span>/v1/me/watchlist</h2>
+
+<div class="ep" id="wl-list">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/me/watchlist</span>
+  <span class="ep-summary">내 워치리스트 (최신 추가 순)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"count"</span>: <span class="n">5</span>,
+    <span class="k">"items"</span>: [
+      {
+        <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+        <span class="k">"company_name"</span>: <span class="s">"Palantir Technologies Inc."</span>,
+        <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+        <span class="k">"sector"</span>: <span class="s">"Technology"</span>,
+        <span class="k">"market_cap"</span>: <span class="n">52000000000</span>,
+        <span class="k">"is_active"</span>: <span class="b">true</span>,
+        <span class="k">"added_at"</span>: <span class="s">"2026-05-12T09:21:00Z"</span>
+      },
+      { <span class="k">"ticker"</span>: <span class="s">"TSLA"</span>, <span class="k">"company_name"</span>: <span class="s">"Tesla, Inc."</span>, <span class="k">"company_name_kr"</span>: <span class="s">"테슬라"</span>, <span class="k">"sector"</span>: <span class="s">"Automotive"</span>, <span class="k">"market_cap"</span>: <span class="n">580000000000</span>, <span class="k">"is_active"</span>: <span class="b">true</span>, <span class="k">"added_at"</span>: <span class="s">"2026-05-10T11:02:00Z"</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="wl-add">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/me/watchlist</span>
+  <span class="ep-summary">종목 추가 (한도 100개)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{ <span class="k">"ticker"</span>: <span class="s">"NVDA"</span> }</div>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"item"</span>: { <span class="k">"ticker"</span>: <span class="s">"NVDA"</span>, <span class="k">"company_name"</span>: <span class="s">"NVIDIA Corporation"</span>, <span class="k">"company_name_kr"</span>: <span class="s">"엔비디아"</span>, <span class="k">"sector"</span>: <span class="s">"Technology"</span>, <span class="k">"market_cap"</span>: <span class="n">2200000000000</span>, <span class="k">"is_active"</span>: <span class="b">true</span>, <span class="k">"added_at"</span>: <span class="s">"2026-05-15T12:34:56Z"</span> }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">WATCHLIST_DUPLICATE</td><td class="s">409</td><td>이미 추가된 종목</td></tr>
+<tr><td class="c">WATCHLIST_LIMIT_EXCEEDED</td><td class="s">422</td><td>100개 초과</td></tr>
+<tr><td class="c">TICKER_NOT_FOUND</td><td class="s">404</td><td>tickers 테이블에 없음</td></tr>
+</table>
+</div>
+</div>
+
+<div class="ep" id="wl-del">
+<div class="ep-head">
+  <span class="method delete">DELETE</span>
+  <span class="ep-path">/v1/me/watchlist/<span class="pp">{ticker}</span></span>
+  <span class="ep-summary">종목 삭제 (멱등)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{ <span class="k">"data"</span>: { <span class="k">"deleted"</span>: <span class="b">true</span>, <span class="k">"ticker"</span>: <span class="s">"NVDA"</span> }, <span class="k">"meta"</span>: { ... } }</div>
+</div>
+</div>
+
+<!-- ============== HISTORY ============== -->
+<h2><span class="h-num">HX</span>/v1/me/history</h2>
+
+<div class="ep" id="hist-list">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/me/history</span>
+  <span class="ep-summary">분석 기록 (cursor 페이지네이션 + 필터)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Query parameters</div>
+<table class="params">
+<thead><tr><th>이름</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="k">cursor</td><td class="t">string</td><td></td><td class="d">이전 응답의 <code>meta.next_cursor</code> 값</td></tr>
+<tr><td class="k">limit</td><td class="t">int</td><td></td><td class="d">기본 20, 최대 100</td></tr>
+<tr><td class="k">grade</td><td class="t">string</td><td></td><td class="d">VOLATILITY_HIGH / MID / LOW</td></tr>
+<tr><td class="k">outcome</td><td class="t">string</td><td></td><td class="d">price_dropped / price_rose / flat / pending</td></tr>
+<tr><td class="k">from / to</td><td class="t">date</td><td></td><td class="d">queried_at 범위 (YYYY-MM-DD)</td></tr>
+</tbody>
+</table>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"total_count"</span>: <span class="n">47</span>,
+    <span class="k">"items"</span>: [
+      {
+        <span class="k">"analysis_id"</span>: <span class="n">1031</span>,
+        <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+        <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+        <span class="k">"grade"</span>: <span class="s">"VOLATILITY_HIGH"</span>,
+        <span class="k">"worst_case_pct"</span>: <span class="s">"-0.2200"</span>,
+        <span class="k">"price_at_query"</span>: <span class="s">"24.1800"</span>,
+        <span class="k">"queried_at"</span>: <span class="s">"2026-04-23T23:11:02Z"</span>,
+        <span class="k">"outcome"</span>: <span class="s">"price_dropped"</span>,
+        <span class="k">"outcome_pct"</span>: <span class="s">"-0.1180"</span>,
+        <span class="k">"outcome_evaluated_at"</span>: <span class="s">"2026-05-23T00:00:00Z"</span>
+      }
+    ]
+  },
+  <span class="k">"meta"</span>: { <span class="k">"request_id"</span>: <span class="s">"req_..."</span>, <span class="k">"ts"</span>: <span class="s">"..."</span>, <span class="k">"next_cursor"</span>: <span class="s">"eyJpZCI6MTAzMX0="</span> }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="hist-stats">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/me/history/stats</span>
+  <span class="ep-summary">분석 누적 통계 (by_outcome / by_grade_outcome)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"total_analyses"</span>: <span class="n">47</span>,
+    <span class="k">"by_outcome"</span>: {
+      <span class="k">"price_dropped"</span>: <span class="n">18</span>,
+      <span class="k">"price_rose"</span>: <span class="n">12</span>,
+      <span class="k">"flat"</span>: <span class="n">8</span>,
+      <span class="k">"pending"</span>: <span class="n">9</span>
+    },
+    <span class="k">"by_grade_outcome"</span>: {
+      <span class="k">"VOLATILITY_HIGH"</span>: { <span class="k">"price_dropped"</span>: <span class="n">12</span>, <span class="k">"price_rose"</span>: <span class="n">2</span>, <span class="k">"flat"</span>: <span class="n">1</span>, <span class="k">"pending"</span>: <span class="n">0</span> },
+      <span class="k">"VOLATILITY_MID"</span>:  { <span class="k">"price_dropped"</span>: <span class="n">4</span>,  <span class="k">"price_rose"</span>: <span class="n">4</span>, <span class="k">"flat"</span>: <span class="n">2</span>, <span class="k">"pending"</span>: <span class="n">0</span> },
+      <span class="k">"VOLATILITY_LOW"</span>:  { <span class="k">"price_dropped"</span>: <span class="n">2</span>,  <span class="k">"price_rose"</span>: <span class="n">6</span>, <span class="k">"flat"</span>: <span class="n">5</span>, <span class="k">"pending"</span>: <span class="n">9</span> }
+    }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="hist-detail">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/me/history/<span class="pp">{analysis_id}</span></span>
+  <span class="ep-summary">분석 단건 상세 (본인 행만)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"item"</span>: {
+      <span class="k">"analysis_id"</span>: <span class="n">1031</span>,
+      <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+      <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+      <span class="k">"grade"</span>: <span class="s">"VOLATILITY_HIGH"</span>,
+      <span class="k">"worst_case_pct"</span>: <span class="s">"-0.2200"</span>,
+      <span class="k">"price_at_query"</span>: <span class="s">"24.1800"</span>,
+      <span class="k">"queried_at"</span>: <span class="s">"2026-04-23T23:11:02Z"</span>,
+      <span class="k">"outcome"</span>: <span class="s">"price_dropped"</span>,
+      <span class="k">"outcome_pct"</span>: <span class="s">"-0.1180"</span>,
+      <span class="k">"outcome_evaluated_at"</span>: <span class="s">"2026-05-23T00:00:00Z"</span>
+    }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">ANALYSIS_NOT_FOUND</td><td class="s">404</td><td>본인 소유 아니거나 미존재</td></tr>
+</table>
+</div>
+</div>
+
+<!-- ============== TICKERS ============== -->
+<h2><span class="h-num">TK</span>/v1/tickers</h2>
+
+<div class="ep" id="tk-list">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/tickers</span>
+  <span class="ep-summary">활성 종목 전체 리스트</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"count"</span>: <span class="n">50</span>,
+    <span class="k">"items"</span>: [
+      { <span class="k">"ticker"</span>: <span class="s">"AAPL"</span>, <span class="k">"company_name"</span>: <span class="s">"Apple Inc."</span>, <span class="k">"company_name_kr"</span>: <span class="s">"애플"</span>, <span class="k">"sector"</span>: <span class="s">"Technology"</span> },
+      { <span class="k">"ticker"</span>: <span class="s">"NVDA"</span>, <span class="k">"company_name"</span>: <span class="s">"NVIDIA Corporation"</span>, <span class="k">"company_name_kr"</span>: <span class="s">"엔비디아"</span>, <span class="k">"sector"</span>: <span class="s">"Technology"</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="tk-search">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/tickers/search?q=엔비</span>
+  <span class="ep-summary">자동완성 — 티커·한글명·영문명</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Query parameters</div>
+<table class="params">
+<thead><tr><th>이름</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="k">q</td><td class="t">string</td><td class="r">필수</td><td class="d">검색어 (1~50자)</td></tr>
+<tr><td class="k">limit</td><td class="t">int</td><td></td><td class="d">기본 10, 최대 50</td></tr>
+</tbody>
+</table>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"query"</span>: <span class="s">"엔비"</span>,
+    <span class="k">"count"</span>: <span class="n">1</span>,
+    <span class="k">"items"</span>: [
+      { <span class="k">"ticker"</span>: <span class="s">"NVDA"</span>, <span class="k">"company_name"</span>: <span class="s">"NVIDIA Corporation"</span>, <span class="k">"company_name_kr"</span>: <span class="s">"엔비디아"</span>, <span class="k">"sector"</span>: <span class="s">"Technology"</span>, <span class="k">"market_cap"</span>: <span class="n">2200000000000</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="tk-sync">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/tickers/sync/<span class="pp">{target}</span></span>
+  <span class="ep-summary">시드 또는 단일 종목 메타데이터 갱신</span>
+</div>
+<div class="ep-body">
+  <p><strong>target</strong> = <code>seed</code> 또는 단일 ticker (<code>AAPL</code> 등). 운영자/cron 용.</p>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"requested"</span>: <span class="n">50</span>,
+    <span class="k">"synced"</span>: <span class="n">48</span>,
+    <span class="k">"failed"</span>: [<span class="s">"XYZ"</span>, <span class="s">"OLD"</span>],
+    <span class="k">"items"</span>: [
+      { <span class="k">"ticker"</span>: <span class="s">"AAPL"</span>, <span class="k">"company_name"</span>: <span class="s">"Apple Inc."</span>, <span class="k">"company_name_kr"</span>: <span class="s">"애플"</span>, <span class="k">"sector"</span>: <span class="s">"Technology"</span>, <span class="k">"market_cap"</span>: <span class="n">3100000000000</span>, <span class="k">"currency"</span>: <span class="s">"USD"</span>, <span class="k">"is_active"</span>: <span class="b">true</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<!-- ============== PRICES ============== -->
+<h2><span class="h-num">PX</span>/v1/prices</h2>
+
+<div class="ep" id="px-get">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/prices/<span class="pp">{target}</span></span>
+  <span class="ep-summary">실시간 가격 — target=all 또는 단일 ticker</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"as_of"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"requested"</span>: <span class="n">50</span>,
+    <span class="k">"fetched"</span>: <span class="n">49</span>,
+    <span class="k">"missing"</span>: [<span class="s">"FOO"</span>],
+    <span class="k">"items"</span>: [
+      {
+        <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+        <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+        <span class="k">"sector"</span>: <span class="s">"Technology"</span>,
+        <span class="k">"trade_date"</span>: <span class="s">"2026-05-15"</span>,
+        <span class="k">"open"</span>: <span class="n">23.92</span>,
+        <span class="k">"high"</span>: <span class="n">24.55</span>,
+        <span class="k">"low"</span>: <span class="n">23.71</span>,
+        <span class="k">"close"</span>: <span class="n">24.18</span>,
+        <span class="k">"volume"</span>: <span class="n">58210000</span>
+      }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="px-sync">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/prices/sync-history/<span class="pp">{target}</span></span>
+  <span class="ep-summary">OHLCV 일괄 적재 (추론 입력용, cron)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Query parameters</div>
+<table class="params">
+<thead><tr><th>이름</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="k">period</td><td class="t">string</td><td></td><td class="d">기본 <code>"1y"</code>. yfinance 표기: 1mo/3mo/6mo/1y/2y/5y/max</td></tr>
+</tbody>
+</table>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"target"</span>: <span class="s">"all"</span>,
+    <span class="k">"period"</span>: <span class="s">"1y"</span>,
+    <span class="k">"requested_tickers"</span>: <span class="n">50</span>,
+    <span class="k">"rows_inserted"</span>: <span class="n">12500</span>,
+    <span class="k">"first_date"</span>: <span class="s">"2025-05-15"</span>,
+    <span class="k">"last_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"missing"</span>: []
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<!-- ============== MACRO ============== -->
+<h2><span class="h-num">MC</span>/v1/macro</h2>
+
+<div class="ep" id="mc-get">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/macro/<span class="pp">{code}</span></span>
+  <span class="ep-summary">DB에서 단일 시리즈 시계열 조회</span>
+</div>
+<div class="ep-body">
+  <p>코드 예: <code>VIX</code>, <code>FEDFUNDS</code>, <code>UNRATE</code>, <code>GS10</code>, <code>T10Y2Y</code>, <code>CPIAUCSL</code> ...</p>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"indicator_code"</span>: <span class="s">"VIX"</span>,
+    <span class="k">"name_kr"</span>: <span class="s">"시장 공포 지수"</span>,
+    <span class="k">"frequency"</span>: <span class="s">"daily"</span>,
+    <span class="k">"count"</span>: <span class="n">252</span>,
+    <span class="k">"points"</span>: [
+      { <span class="k">"trade_date"</span>: <span class="s">"2026-05-15"</span>, <span class="k">"value"</span>: <span class="s">"24.31"</span> },
+      { <span class="k">"trade_date"</span>: <span class="s">"2026-05-14"</span>, <span class="k">"value"</span>: <span class="s">"23.05"</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="mc-sync">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/macro/sync/<span class="pp">{target}</span></span>
+  <span class="ep-summary">FRED → DB upsert (cron)</span>
+</div>
+<div class="ep-body">
+  <p><strong>target</strong> = <code>seed</code> (전체 13개) 또는 단일 코드.</p>
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"requested"</span>: <span class="n">13</span>,
+    <span class="k">"synced"</span>: <span class="n">13</span>,
+    <span class="k">"failed"</span>: [],
+    <span class="k">"items"</span>: [
+      { <span class="k">"indicator_code"</span>: <span class="s">"VIX"</span>, <span class="k">"name_kr"</span>: <span class="s">"시장 공포 지수"</span>, <span class="k">"frequency"</span>: <span class="s">"daily"</span>, <span class="k">"rows"</span>: <span class="n">22</span>, <span class="k">"earliest"</span>: <span class="s">"2026-04-14"</span>, <span class="k">"latest"</span>: <span class="s">"2026-05-15"</span> }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<!-- ============== RISK ============== -->
+<h2><span class="h-num">RK</span>/v1/risk</h2>
+
+<div class="ep" id="rk-spotlight">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/risk/spotlight</span>
+  <span class="ep-summary">홈 — HIGH 등급 중 worst top1</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Query parameters</div>
+<table class="params">
+<thead><tr><th>이름</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="k">scope</td><td class="t">string</td><td></td><td class="d">기본 <code>all</code>. <code>watchlist</code> 지정 시 인증 필수</td></tr>
+</tbody>
+</table>
+
+  <div class="ep-section-title">Response 200 — HIGH 종목 있음</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"headline_code"</span>: <span class="s">"HIGH_RISK_FOUND"</span>,
+    <span class="k">"spotlight"</span>: {
+      <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+      <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+      <span class="k">"grade"</span>: <span class="s">"VOLATILITY_HIGH"</span>,
+      <span class="k">"message_code"</span>: <span class="s">"HIGH_DOWNSIDE_PRESSURE"</span>,
+      <span class="k">"worst_case_pct"</span>: <span class="s">"-0.2200"</span>,
+      <span class="k">"current_price"</span>: <span class="s">"24.1800"</span>,
+      <span class="k">"as_of"</span>: <span class="s">"2026-05-15"</span>
+    }
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+
+  <div class="ep-section-title">Response 200 — HIGH 종목 없음</div>
+<div class="code">{
+  <span class="k">"data"</span>: { <span class="k">"headline_code"</span>: <span class="s">"ALL_QUIET"</span>, <span class="k">"spotlight"</span>: <span class="b">null</span> },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="rk-verdict">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/risk/<span class="pp">{ticker}</span></span>
+  <span class="ep-summary">단일 종목 종합 — grade + prediction + XAI + summary</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Query parameters</div>
+<table class="params">
+<thead><tr><th>이름</th><th>타입</th><th>필수</th><th>설명</th></tr></thead>
+<tbody>
+<tr><td class="k">record</td><td class="t">bool</td><td></td><td class="d">true + 인증 시 analysis_history INSERT (T+30 outcome 평가 근거)</td></tr>
+</tbody>
+</table>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+    <span class="k">"company_name_kr"</span>: <span class="s">"팰런티어"</span>,
+    <span class="k">"current_price"</span>: <span class="s">"24.1800"</span>,
+    <span class="k">"as_of"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"grade"</span>: {
+      <span class="k">"value"</span>: <span class="s">"VOLATILITY_HIGH"</span>,
+      <span class="k">"worst_case_pct"</span>: <span class="s">"-0.2200"</span>,
+      <span class="k">"message_code"</span>: <span class="s">"HIGH_DOWNSIDE_PRESSURE"</span>
+    },
+    <span class="k">"prediction"</span>: {
+      <span class="k">"prediction_id"</span>: <span class="n">8821</span>,
+      <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+      <span class="k">"horizon_days"</span>: <span class="n">30</span>,
+      <span class="k">"q05_path"</span>: [<span class="n">-0.008</span>, <span class="n">-0.015</span>, <span class="n">-0.021</span>, <span class="n">-0.028</span>, <span class="c">/* … 30개 */</span>],
+      <span class="k">"q15_path"</span>: [<span class="n">-0.003</span>, <span class="n">-0.006</span>, <span class="n">-0.009</span>, <span class="n">-0.012</span>, <span class="c">/* … 30개 */</span>],
+      <span class="k">"model_name"</span>: <span class="s">"tft-m3"</span>,
+      <span class="k">"model_version"</span>: <span class="s">"m3"</span>
+    },
+    <span class="k">"xai"</span>: {
+      <span class="k">"features"</span>: [
+        {
+          <span class="k">"feature"</span>: <span class="s">"VIX_Close"</span>,
+          <span class="k">"weight"</span>: <span class="n">0.38</span>,
+          <span class="k">"label"</span>: <span class="s">"VIX 변동성지수"</span>,
+          <span class="k">"description"</span>: <span class="s">"S&amp;P 500 옵션 내재 변동성 지수(VIX) — 시장 전반의 공포·기대 변동성을 측정합니다."</span>
+        },
+        {
+          <span class="k">"feature"</span>: <span class="s">"RSI_14"</span>,
+          <span class="k">"weight"</span>: <span class="n">0.21</span>,
+          <span class="k">"label"</span>: <span class="s">"RSI 14일"</span>,
+          <span class="k">"description"</span>: <span class="s">"14일 상대강도지수(RSI) — 70 이상은 통계적 과열, 30 이하는 과매도 구간으로 해석됩니다."</span>
+        },
+        {
+          <span class="k">"feature"</span>: <span class="s">"Realized_Vol_20d"</span>,
+          <span class="k">"weight"</span>: <span class="n">0.18</span>,
+          <span class="k">"label"</span>: <span class="s">"최근 20일 실현 변동성"</span>,
+          <span class="k">"description"</span>: <span class="s">"지난 20거래일 종가의 표준편차로 측정한 최근 변동성 수준입니다."</span>
+        }
+      ]
+    },
+    <span class="k">"summary_narrative"</span>: <span class="s">"최근 30거래일 관측 기반으로 과거 분포 상위 5% 구간에 해당하는 통계적 고변동성 구간에 해당합니다. VIX 변동성지수 · RSI 14일 · 최근 20일 실현 변동성이(가) 핵심 입력 변수로 작용했습니다. 모델은 본 종목의 30일 worst-case를 -22.0%로 분류했습니다."</span>,
+    <span class="k">"analysis_id"</span>: <span class="n">1031</span>
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">TICKER_NOT_FOUND</td><td class="s">404</td><td>종목 미존재/비활성</td></tr>
+<tr><td class="c">PREDICTION_NOT_READY</td><td class="s">503</td><td>아직 추론 안 돌아간 종목</td></tr>
+</table>
+</div>
+</div>
+
+<div class="ep" id="rk-path">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/risk/<span class="pp">{ticker}</span>/path</span>
+  <span class="ep-summary">fan chart 전용 — q05/q15 path</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+    <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"horizon_days"</span>: <span class="n">30</span>,
+    <span class="k">"q05_path"</span>: [<span class="n">-0.008</span>, <span class="n">-0.015</span>, <span class="n">-0.021</span>, <span class="c">/* … 30개 */</span>, <span class="n">-0.220</span>],
+    <span class="k">"q15_path"</span>: [<span class="n">-0.003</span>, <span class="n">-0.006</span>, <span class="n">-0.009</span>, <span class="c">/* … 30개 */</span>, <span class="n">-0.092</span>]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="rk-attention">
+<div class="ep-head">
+  <span class="method get">GET</span>
+  <span class="ep-path">/v1/risk/<span class="pp">{ticker}</span>/attention</span>
+  <span class="ep-summary">XAI — 변수 가중치 + 자연어 설명 (top 3)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+    <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"features"</span>: [
+      {
+        <span class="k">"feature"</span>: <span class="s">"VIX_Close"</span>,
+        <span class="k">"weight"</span>: <span class="n">0.38</span>,
+        <span class="k">"label"</span>: <span class="s">"VIX 변동성지수"</span>,
+        <span class="k">"description"</span>: <span class="s">"S&amp;P 500 옵션 내재 변동성 지수(VIX) — 시장 전반의 공포·기대 변동성을 측정합니다."</span>
+      },
+      {
+        <span class="k">"feature"</span>: <span class="s">"RSI_14"</span>,
+        <span class="k">"weight"</span>: <span class="n">0.21</span>,
+        <span class="k">"label"</span>: <span class="s">"RSI 14일"</span>,
+        <span class="k">"description"</span>: <span class="s">"14일 상대강도지수(RSI) — 70 이상은 통계적 과열, 30 이하는 과매도 구간으로 해석됩니다."</span>
+      },
+      {
+        <span class="k">"feature"</span>: <span class="s">"Realized_Vol_20d"</span>,
+        <span class="k">"weight"</span>: <span class="n">0.18</span>,
+        <span class="k">"label"</span>: <span class="s">"최근 20일 실현 변동성"</span>,
+        <span class="k">"description"</span>: <span class="s">"지난 20거래일 종가의 표준편차로 측정한 최근 변동성 수준입니다."</span>
+      }
+    ]
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+  <div class="ep-section-title">에러</div>
+<table class="errors-table">
+<tr><td class="c">XAI_NOT_READY</td><td class="s">503</td><td>해당 prediction의 XAI 미생성</td></tr>
+</table>
+</div>
+</div>
+
+<div class="ep" id="rk-tft">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/risk/sync/run-tft-m3</span>
+  <span class="ep-summary">DB → m3.ckpt 직접 추론 → 자동 저장 (운영자/cron)</span>
+</div>
+<div class="ep-body">
+  <div class="note"><strong>가장 많이 쓰는 추론 엔드포인트.</strong> DB의 prices+macro 읽어 → 서버 내장 m3.ckpt 추론 → predictions / risk_grades / xai_explanations 자동 UPSERT. 외부 의존성 없음.</div>
+
+  <div class="ep-section-title">Request body (모든 필드 선택)</div>
+<div class="code">{
+  <span class="k">"base_date"</span>: <span class="b">null</span>,           <span class="c">// 미지정 시 prices 최신 거래일</span>
+  <span class="k">"horizon_days"</span>: <span class="b">null</span>,        <span class="c">// 미지정 시 config (기본 30)</span>
+  <span class="k">"model_name"</span>: <span class="s">"tft-m3"</span>,
+  <span class="k">"model_version"</span>: <span class="s">"m3"</span>
+}</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"horizon_days"</span>: <span class="n">30</span>,
+    <span class="k">"quantile_levels"</span>: [<span class="n">0.05</span>, <span class="n">0.10</span>, <span class="n">0.15</span>, <span class="n">0.25</span>, <span class="n">0.50</span>, <span class="n">0.75</span>, <span class="n">0.85</span>, <span class="n">0.90</span>, <span class="n">0.95</span>],
+    <span class="k">"n_tickers_with_data"</span>: <span class="n">48</span>,
+    <span class="k">"predictions_upserted"</span>: <span class="n">48</span>,
+    <span class="k">"risk_grades_upserted"</span>: <span class="n">48</span>,
+    <span class="k">"xai_inserted"</span>: <span class="n">48</span>,
+    <span class="k">"skipped_tickers"</span>: [<span class="s">"FOO"</span>, <span class="s">"BAR"</span>],
+    <span class="k">"model_name"</span>: <span class="s">"tft-m3"</span>,
+    <span class="k">"model_version"</span>: <span class="s">"m3"</span>
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="rk-baseline">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/risk/sync/baseline</span>
+  <span class="ep-summary">predict CSV 적재 (학부생 환경 결과 파일 → DB)</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{
+  <span class="k">"predict_csv_path"</span>: <span class="s">"./predict_example.csv"</span>,
+  <span class="k">"xai_csv_path"</span>: <span class="s">"./xai_example.csv"</span>,
+  <span class="k">"base_date"</span>: <span class="b">null</span>,
+  <span class="k">"model_name"</span>: <span class="s">"tft"</span>,
+  <span class="k">"model_version"</span>: <span class="s">"m3"</span>
+}</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"predictions_upserted"</span>: <span class="n">4</span>,
+    <span class="k">"risk_grades_upserted"</span>: <span class="n">4</span>,
+    <span class="k">"xai_inserted"</span>: <span class="n">4</span>,
+    <span class="k">"model_name"</span>: <span class="s">"tft"</span>,
+    <span class="k">"model_version"</span>: <span class="s">"m3"</span>
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<div class="ep" id="rk-predictions">
+<div class="ep-head">
+  <span class="method post">POST</span>
+  <span class="ep-path">/v1/risk/sync/predictions</span>
+  <span class="ep-summary">JSON 일괄 적재 — 19 quantile + XAI</span>
+</div>
+<div class="ep-body">
+  <div class="ep-section-title">Request body</div>
+<div class="code">{
+  <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+  <span class="k">"horizon_days"</span>: <span class="n">30</span>,
+  <span class="k">"quantile_levels"</span>: [<span class="n">0.05</span>, <span class="n">0.15</span>, <span class="n">0.50</span>, <span class="n">0.85</span>, <span class="n">0.95</span>],
+  <span class="k">"model_name"</span>: <span class="s">"kronos"</span>,
+  <span class="k">"model_version"</span>: <span class="s">"small"</span>,
+  <span class="k">"items"</span>: [
+    {
+      <span class="k">"ticker"</span>: <span class="s">"PLTR"</span>,
+      <span class="k">"paths"</span>: [
+        [<span class="n">-0.008</span>, <span class="n">-0.003</span>, <span class="n">0.001</span>, <span class="n">0.005</span>, <span class="n">0.010</span>],
+        <span class="c">// … 30 rows (horizon_days × 5 quantiles)</span>
+        [<span class="n">-0.220</span>, <span class="n">-0.092</span>, <span class="n">0.005</span>, <span class="n">0.085</span>, <span class="n">0.180</span>]
+      ],
+      <span class="k">"xai_features"</span>: [
+        { <span class="k">"feature"</span>: <span class="s">"VIX_Close"</span>, <span class="k">"weight"</span>: <span class="n">0.38</span>, <span class="k">"label"</span>: <span class="s">"VIX 변동성지수"</span> },
+        { <span class="k">"feature"</span>: <span class="s">"RSI_14"</span>, <span class="k">"weight"</span>: <span class="n">0.21</span>, <span class="k">"label"</span>: <span class="s">"RSI 14일"</span> },
+        { <span class="k">"feature"</span>: <span class="s">"Realized_Vol_20d"</span>, <span class="k">"weight"</span>: <span class="n">0.18</span>, <span class="k">"label"</span>: <span class="s">"최근 20일 실현 변동성"</span> }
+      ]
+    }
+  ]
+}</div>
+
+  <div class="ep-section-title">Response 200</div>
+<div class="code">{
+  <span class="k">"data"</span>: {
+    <span class="k">"base_date"</span>: <span class="s">"2026-05-15"</span>,
+    <span class="k">"horizon_days"</span>: <span class="n">30</span>,
+    <span class="k">"quantile_levels"</span>: [<span class="n">0.05</span>, <span class="n">0.15</span>, <span class="n">0.50</span>, <span class="n">0.85</span>, <span class="n">0.95</span>],
+    <span class="k">"predictions_upserted"</span>: <span class="n">1</span>,
+    <span class="k">"risk_grades_upserted"</span>: <span class="n">1</span>,
+    <span class="k">"xai_inserted"</span>: <span class="n">1</span>,
+    <span class="k">"skipped_tickers"</span>: [],
+    <span class="k">"model_name"</span>: <span class="s">"kronos"</span>,
+    <span class="k">"model_version"</span>: <span class="s">"small"</span>
+  },
+  <span class="k">"meta"</span>: { ... }
+}</div>
+</div>
+</div>
+
+<footer>
+  <div>BEFORE API Spec · v0.1</div>
+  <div>backend · ZERi-server · develop</div>
+  <div>2026.05 · Internal</div>
+</footer>
+
+</main>
+</div>
+</body>
+</html>

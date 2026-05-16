@@ -43,6 +43,7 @@ from app.schemas.risk import (
     SpotlightData,
     SpotlightItem,
 )
+from app.services.xai_templates import build_summary_narrative, feature_description
 
 __all__ = ["get_spotlight", "get_verdict", "get_path", "get_attention"]
 
@@ -128,6 +129,11 @@ async def _load_xai(session: AsyncSession, prediction_id: int) -> XaiExplanation
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+# UI 화면 04 "핵심 영향 변수" 카드는 top 3 만 노출. 추론 측 _xai_features 도 top_n=3.
+# 응답 시점에도 한 번 더 자르는 이유: 과거 inference 가 더 많이 저장해둔 row 보호.
+_TOP_FEATURES = 3
+
+
 def _features_to_section(xai: XaiExplanation | None) -> RiskXaiSection | None:
     if xai is None:
         return None
@@ -136,8 +142,11 @@ def _features_to_section(xai: XaiExplanation | None) -> RiskXaiSection | None:
             feature=f.get("feature", ""),
             weight=float(f.get("weight", 0.0)),
             label=f.get("label") or f.get("feature", ""),
+            description=feature_description(
+                f.get("feature", ""), f.get("label"),
+            ),
         )
-        for f in (xai.features or [])
+        for f in (xai.features or [])[:_TOP_FEATURES]
     ]
     return RiskXaiSection(features=features)
 
@@ -220,6 +229,16 @@ async def get_verdict(
             price_at_query=grade_row.current_price,
         )
 
+    xai_section = _features_to_section(xai)
+    summary = None
+    if xai_section is not None and xai_section.features:
+        summary = build_summary_narrative(
+            grade=grade_row.grade,
+            worst_case_pct=grade_row.worst_case_pct,
+            top_features=list(xai.features or []),
+            horizon_days=pred.horizon_days,
+        )
+
     return RiskVerdictData(
         ticker=ticker_upper,
         company_name_kr=t.company_name_kr,
@@ -239,7 +258,8 @@ async def get_verdict(
             model_name=pred.model_name,
             model_version=pred.model_version,
         ),
-        xai=_features_to_section(xai),
+        xai=xai_section,
+        summary_narrative=summary,
         analysis_id=analysis_id,
     )
 
@@ -292,8 +312,11 @@ async def get_attention(session: AsyncSession, ticker: str) -> RiskAttentionData
             feature=f.get("feature", ""),
             weight=float(f.get("weight", 0.0)),
             label=f.get("label") or f.get("feature", ""),
+            description=feature_description(
+                f.get("feature", ""), f.get("label"),
+            ),
         )
-        for f in (xai.features or [])
+        for f in (xai.features or [])[:_TOP_FEATURES]
     ]
     return RiskAttentionData(
         ticker=ticker_upper,

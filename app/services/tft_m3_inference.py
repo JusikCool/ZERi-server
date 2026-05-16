@@ -202,7 +202,7 @@ _LABEL_KR: dict[str, str] = {
 def _xai_features(
     interp: dict,
     encoder_vars: list[str],
-    top_n: int = 10,
+    top_n: int = 3,
 ) -> list[dict]:
     if "encoder_variables" not in interp:
         return []
@@ -325,7 +325,7 @@ async def run_tft_m3_inference(
                 for k, v in output.items()
             }
             interp = tft.interpret_output(out_g, reduction="sum")
-            xai = _xai_features(interp, encoder_vars, top_n=10)
+            xai = _xai_features(interp, encoder_vars, top_n=3)
         except Exception as e:  # noqa: BLE001
             logger.warning("interpret_output failed for %s: %s", g, e)
             xai = []
