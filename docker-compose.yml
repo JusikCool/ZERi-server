@@ -3,15 +3,14 @@ services:
     image: postgres:16-alpine
     container_name: before-db
     environment:
-      POSTGRES_USER: before
-      POSTGRES_PASSWORD: before
-      POSTGRES_DB: before
-    ports:
-      - "5432:5432"
+      # 운영 진입 시 .env 또는 secret manager 에서 주입. 미설정이면 compose 부팅 자체 실패.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U before -d before"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -19,32 +18,23 @@ services:
   api:
     build: .
     container_name: before-api
-    # 개발용 override — entrypoint(alembic + uvicorn) 대신 hot-reload uvicorn 으로 교체.
-    # 운영(Railway/Cloud Run) 에선 이 override 없이 Dockerfile 의 ENTRYPOINT 가 그대로 사용됨.
-    entrypoint: []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # 운영용 — Dockerfile 의 ENTRYPOINT(scripts/entrypoint.sh) 가 그대로 실행.
+    # docker-compose.override.yml 이 dev 편의(--reload, port expose) 를 자동 머지.
     environment:
-      ENV: ${ENV:-dev}
-      DATABASE_URL: postgresql+asyncpg://before:before@db:5432/before
-      PORT: 8000
-      # 평문 시크릿 박지 말 것 — .env 경유 (운영은 secret manager 사용)
-      # dev 가 아닌 환경에서 기본값 그대로면 config.py 가 부팅 시 실패시킴.
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ENV: ${ENV:?ENV must be set (dev|prod|test)}
+      # Postgres 호스트는 같은 compose 네트워크의 'db' 서비스. 외부 DB 면 운영에서 override.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      PORT: ${PORT:-8000}
+      # 시크릿 — 미설정이면 부팅 자체 실패. dev 라도 .env 에서 의도적으로 채워야 함.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRES_IN: ${ACCESS_TOKEN_EXPIRES_IN:-3600}
       REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-1209600}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      FRED_API_KEY: ${FRED_API_KEY}
-    volumes:
-      - ./:/app
-      # Keep the image's linux .venv alive under the bind mount, off the host filesystem.
-      - apivenv:/app/.venv
-    ports:
-      - "8000:8000"
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      FRED_API_KEY: ${FRED_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   pgdata:
-  apivenv:
