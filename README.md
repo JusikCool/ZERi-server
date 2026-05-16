@@ -99,6 +99,38 @@ schema     → Pydantic DTO (API 계약).
 
 `service/`, `repository/` 디렉토리는 첫 엔드포인트 구현되는 시점(Phase 1+)에 추가.
 
+## 배포
+
+배포 진입 준비는 `feature/deploy-readiness` 에서 처리 — 핵심 변화 4가지:
+
+1. **`scripts/entrypoint.sh`** 가 컨테이너 부팅 시 `alembic upgrade head` 후 uvicorn 실행. DB 스키마 불일치 상태에서 서버 안 띄움.
+2. **`$PORT` 동적** — Railway/Cloud Run 등 PORT 주입 환경 호환. 미주입 시 8000 폴백.
+3. **운영 시크릿 가드** — `ENV != dev/test` 일 때 `JWT_SECRET` 가 기본/취약 값이면 `_validate_production_secrets` 가 부팅 단계에서 거부. 사고를 부팅 단계에서 막음.
+4. **`HEALTHCHECK`** — Dockerfile 에 `/health` 폴링 추가. Railway 헬스체크 자동 인식.
+
+### 운영 환경에서 필요한 환경변수
+
+```
+ENV=prod                            # 보안 검증 활성화
+DATABASE_URL=postgresql+asyncpg://...
+JWT_SECRET=<openssl rand -hex 32>   # 32바이트 이상 random hex
+CORS_ORIGINS=https://before.app
+FRED_API_KEY=...
+PORT=8000                            # Railway 는 자동 주입
+```
+
+### 로컬에서 운영 모드 시뮬레이션
+
+```bash
+ENV=prod \
+JWT_SECRET=$(openssl rand -hex 32) \
+docker compose up --build
+```
+
+`JWT_SECRET` 누락 시 컨테이너가 부팅 단계에서 종료 — 의도된 동작.
+
+---
+
 ## 워크플로 — Docker only
 
 이 프로젝트는 호스트 가상환경을 쓰지 않는다. Python · uv · 의존성 · 마이그레이션 · 테스트 · 린트 전부 `api` 컨테이너 안에서 돌아가고, 호스트엔 Docker만 있으면 된다.

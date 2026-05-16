@@ -9,6 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # uv binary
 COPY --from=ghcr.io/astral-sh/uv:0.5.13 /uv /uvx /usr/local/bin/
 
+# curl: HEALTHCHECK 용 (slim 이미지에는 미포함)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Resolve deps first (cache layer) — inference extras 포함 (torch, pytorch-forecasting 등)
@@ -24,4 +29,8 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway 등은 $PORT 를 주입. 미주입 시 8000 폴백.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
+
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
