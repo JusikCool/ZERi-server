@@ -2,8 +2,27 @@
 
 리스크 우선 관점의 미국주식 리뷰 API. 스펙: `BEFORE_DOCS_v1` (DB v0.4 / API v1.0).
 
-Phase 0 골격 — FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
-비즈니스 로직은 아직 없고, 데이터 구조와 공통 인프라만 깔려 있는 상태.
+스택: FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16 + PyTorch (서버 내장 TFT 추론).
+
+문서 (`docs/`):
+
+- [API.md](docs/API.md) — 도메인별 엔드포인트 명세 (스펙 본문)
+- [api_spec.html](docs/api_spec.html) — 요청/응답 JSON 예시 일람 (프런트·외부 협업용)
+- [BETTER.md](docs/BETTER.md) — 적용한 설계·구현 패턴
+- [ISSUES.md](docs/ISSUES.md) — 마주친 이슈와 해결 과정 + 미해결 부채 목록
+
+진척도 (2026-05-16):
+
+- ✅ Phase 0 — 공통 인프라 (envelope, error codes, exception handlers, DB session, request_id)
+- ✅ tickers — 시드 메타 sync, 자동완성 검색 (현재 시드 6 → 50 확장 예정)
+- ✅ prices — yfinance OHLCV 적재
+- ✅ macro — FRED 13개 시리즈 적재 + 시계열 조회
+- ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
+- ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의
+- ✅ /me/watchlist — GET / POST / DELETE, 안전 상한 100, 중복·비활성 차단, 멱등 삭제, rate limit
+- ✅ risk — spotlight / verdict / path / attention 4개 GET + sync 5개 POST. **서버 내장 TFT m3 추론** (`/sync/run-tft-m3`) → predictions / risk_grades / xai_explanations 자동 적재. XAI 자연어 설명 + summary_narrative 응답 포함.
+- ✅ /me/history — list / stats / detail 3개 GET. `record=true` 시 verdict 조회 스냅샷을 analysis_history 에 INSERT.
+- ⏳ **미구현 (LIVE 전 처리 필요)** — F-MODEL endpoints (`/v1/models/honesty`), 백테스트 계산 로직 (Kupiec / Hit rate), T+30 outcome 평가 cron (`POST /v1/history/evaluate`), 매일 자동 sync/inference cron, Kronos 통합. 자세한 부채 목록은 [ISSUES.md](docs/ISSUES.md) 하단 참조.
 
 ## 스택
 
@@ -16,26 +35,57 @@ Phase 0 골격 — FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16.
 ## 디렉토리 구조
 
 ```
-app/
-├── main.py                 # FastAPI 앱, 미들웨어, 예외 핸들러, /health
-├── core/
-│   ├── config.py           # pydantic-settings (.env 로드)
-│   ├── error_codes.py      # ErrorCode enum + HTTP/메시지 매핑 (스펙 §0.4)
-│   └── exceptions.py       # AppException
-├── schemas/
-│   └── common.py           # ApiResponse / ApiError 공통 envelope (스펙 §0.2)
-├── db/
-│   ├── base.py             # DeclarativeBase
-│   ├── session.py          # async engine + get_db()
-│   └── models/             # ORM 모델 12개 (테이블당 한 파일)
-└── api/
-    ├── deps.py             # 공통 FastAPI 의존성
-    └── v1/
-        └── router.py       # /v1 라우터 집합 (단계별로 endpoint 추가)
-alembic/
-├── env.py                  # async 대응
-├── script.py.mako
-└── versions/               # `alembic revision --autogenerate` 결과물
+ZERi-server/
+├── README.md               # (이 파일)
+├── Dockerfile              # api 컨테이너 이미지 (uv + Python 3.12 + inference extras)
+├── docker-compose.yml      # api + db 서비스
+├── alembic.ini             # 마이그레이션 설정
+├── pyproject.toml          # 의존성 (uv)
+├── .env / .env.example     # 환경변수 (DATABASE_URL, JWT_SECRET, FRED_API_KEY)
+│
+├── app/
+│   ├── main.py             # FastAPI 앱, 미들웨어, 예외 핸들러, /health, lifespan(sweep)
+│   ├── core/               # config, error_codes, exceptions, security, password_policy, rate_limit
+│   ├── schemas/            # Pydantic DTO (auth, me, watchlist, risk, history, common)
+│   ├── db/
+│   │   ├── base.py         # DeclarativeBase
+│   │   ├── session.py      # async engine + get_db()
+│   │   └── models/         # ORM (테이블당 한 파일)
+│   ├── services/           # 비즈니스 로직
+│   │   ├── auth_service.py
+│   │   ├── me_service.py
+│   │   ├── watchlist_service.py
+│   │   ├── history_service.py
+│   │   ├── risk_query_service.py        # spotlight / verdict / path / attention
+│   │   ├── risk_ingest_service.py       # predictions/risk_grades/xai UPSERT 공용 코어
+│   │   ├── risk_inference_runner.py     # 외부 ZERi-ai-model 스크립트 호출 변형
+│   │   ├── risk_inference_baseline.py   # 통계 baseline 추론
+│   │   ├── tft_m3_inference.py          # 서버 내장 m3.ckpt 추론 (PyTorch)
+│   │   ├── xai_ingest_service.py        # XAI CSV → JSON 적재
+│   │   ├── xai_templates.py             # 변수별 한국어 설명 + summary_narrative 빌더
+│   │   ├── feature_engineering.py       # 추론 입력 panel 생성
+│   │   ├── fred_service.py              # FRED 어댑터
+│   │   └── yfinance_service.py          # yfinance 어댑터
+│   ├── ml/
+│   │   └── m3_tft/         # TFT 모델 코드 (model/dataset/loss/config)
+│   ├── pipelines/          # 시드 (tickers, macro)
+│   └── api/
+│       ├── deps.py         # get_db, get_current_user, get_optional_user
+│       └── v1/
+│           ├── router.py
+│           └── endpoints/  # auth, me, watchlist, tickers, prices, macro, risk, history
+│
+├── docs/
+│   ├── API.md              # 도메인별 엔드포인트 명세
+│   ├── api_spec.html       # JSON 요청/응답 예시 (시각화)
+│   ├── BETTER.md           # 적용한 설계·구현 패턴
+│   └── ISSUES.md           # 이슈/해결 + 부채 목록
+│
+├── models/
+│   └── m3.ckpt             # ⚠️ git 추적 X (.gitignore). 외부 채널로 별도 공유
+│
+├── alembic/versions/       # 자동 생성 마이그레이션
+└── tests/                  # 격리 schema fixture + 도메인별 시나리오
 ```
 
 ## 레이어 규칙
@@ -48,6 +98,38 @@ schema     → Pydantic DTO (API 계약).
 ```
 
 `service/`, `repository/` 디렉토리는 첫 엔드포인트 구현되는 시점(Phase 1+)에 추가.
+
+## 배포
+
+배포 진입 준비는 `feature/deploy-readiness` 에서 처리 — 핵심 변화 4가지:
+
+1. **`scripts/entrypoint.sh`** 가 컨테이너 부팅 시 `alembic upgrade head` 후 uvicorn 실행. DB 스키마 불일치 상태에서 서버 안 띄움.
+2. **`$PORT` 동적** — Railway/Cloud Run 등 PORT 주입 환경 호환. 미주입 시 8000 폴백.
+3. **운영 시크릿 가드** — `ENV != dev/test` 일 때 `JWT_SECRET` 가 기본/취약 값이면 `_validate_production_secrets` 가 부팅 단계에서 거부. 사고를 부팅 단계에서 막음.
+4. **`HEALTHCHECK`** — Dockerfile 에 `/health` 폴링 추가. Railway 헬스체크 자동 인식.
+
+### 운영 환경에서 필요한 환경변수
+
+```
+ENV=prod                            # 보안 검증 활성화
+DATABASE_URL=postgresql+asyncpg://...
+JWT_SECRET=<openssl rand -hex 32>   # 32바이트 이상 random hex
+CORS_ORIGINS=https://before.app
+FRED_API_KEY=...
+PORT=8000                            # Railway 는 자동 주입
+```
+
+### 로컬에서 운영 모드 시뮬레이션
+
+```bash
+ENV=prod \
+JWT_SECRET=$(openssl rand -hex 32) \
+docker compose up --build
+```
+
+`JWT_SECRET` 누락 시 컨테이너가 부팅 단계에서 종료 — 의도된 동작.
+
+---
 
 ## 워크플로 — Docker only
 
@@ -96,8 +178,9 @@ docker compose exec api alembic check        # ORM ↔ DB drift 점검
 docker compose exec api ruff check .
 docker compose exec api ruff format .
 
-# 테스트 (Phase 1+에서 추가)
+# 테스트
 docker compose exec api pytest
+docker compose exec api pytest tests/test_auth.py -v
 
 # psql 셸
 docker compose exec db psql -U before -d before

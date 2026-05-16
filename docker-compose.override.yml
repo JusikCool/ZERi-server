@@ -1,0 +1,27 @@
+# Dev 편의 옵션. `docker compose up` 시 자동 머지됨.
+#
+# 운영(Railway/EC2/Cloud Run) 에서는 이 override 를 적용하지 말 것:
+#   docker compose -f docker-compose.yml up -d
+#
+# 분리한 이유:
+# - --reload 가 운영에 우연히 켜지면 코드 변경 감지 시 워커 재시작 → 진행 중인 요청 중단.
+# - 호스트 5432 포트 노출도 운영에선 보안 위험 (DB 가 외부 인터넷에 노출되는 사고).
+# - 호스트 bind mount 는 운영 이미지의 이뮤터블 특성을 깨뜨림.
+
+services:
+  db:
+    ports:
+      - "5432:5432"  # 호스트 psql 접속용 (dev 전용)
+
+  api:
+    # Dockerfile ENTRYPOINT 대신 hot-reload uvicorn 직접 실행
+    entrypoint: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app                # 코드 변경 즉시 반영
+      - apivenv:/app/.venv     # 컨테이너 안 venv 보호 (호스트 .venv 와 분리)
+
+volumes:
+  apivenv:

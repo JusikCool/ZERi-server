@@ -1,0 +1,216 @@
+"""테스트용 공통 fixture.
+
+- 단일 PG 컨테이너에 별도 schema(`test_<uuid>`)를 만들어 격리.
+- 테스트마다 깨끗한 DB. 끝나면 schema 삭제.
+- 운영 DB에 영향 없게 search_path를 test schema로 고정.
+
+로컬 실행: docker compose exec api pytest
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from collections.abc import AsyncIterator
+
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# 테스트 DB URL은 운영용과 다른 schema 사용. 같은 PG 인스턴스, 격리된 namespace.
+_BASE_DB_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://before:before@db:5432/before")
+
+
+def _schema_for_run() -> str:
+    return f"test_{uuid.uuid4().hex[:12]}"
+
+
+@pytest_asyncio.fixture
+async def db_schema() -> AsyncIterator[str]:
+    """격리 schema 생성 → yield → cleanup."""
+    schema = _schema_for_run()
+    engine = create_async_engine(_BASE_DB_URL, isolation_level="AUTOCOMMIT")
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+    await engine.dispose()
+    try:
+        yield schema
+    finally:
+        engine = create_async_engine(_BASE_DB_URL, isolation_level="AUTOCOMMIT")
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def db_session(db_schema: str) -> AsyncIterator[AsyncSession]:
+    """격리된 schema에 모든 모델 테이블 생성 후 세션 제공.
+
+    asyncpg는 server_settings를 URL 쿼리가 아닌 connect_args로 받음.
+    """
+    from app.db.models import Base
+
+    engine = create_async_engine(
+        _BASE_DB_URL,
+        future=True,
+        connect_args={"server_settings": {"search_path": db_schema}},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with SessionLocal() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def seed_tickers(db_session: AsyncSession) -> list[str]:
+    """워치리스트/리스크 테스트용 최소 시드. 격리 schema라 매번 새로 채워야 함."""
+    from app.db.models import Ticker
+
+    rows = [
+        Ticker(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            company_name_kr="애플",
+            sector="메가캡 테크",
+            market_cap=3_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="MSFT",
+            company_name="Microsoft Corporation",
+            company_name_kr="마이크로소프트",
+            sector="메가캡 테크",
+            market_cap=3_500_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="NVDA",
+            company_name="NVIDIA Corporation",
+            company_name_kr="엔비디아",
+            sector="반도체",
+            market_cap=4_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="GOOGL",
+            company_name="Alphabet Inc.",
+            company_name_kr="알파벳",
+            sector="메가캡 테크",
+            market_cap=2_000_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="AMZN",
+            company_name="Amazon.com, Inc.",
+            company_name_kr="아마존",
+            sector="이커머스",
+            market_cap=1_800_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(
+            ticker="META",
+            company_name="Meta Platforms, Inc.",
+            company_name_kr="메타",
+            sector="메가캡 테크",
+            market_cap=1_500_000_000_000,
+            currency="USD",
+            is_active=True,
+        ),
+        Ticker(  # 비활성 — TICKER_NOT_FOUND 케이스용
+            ticker="DEAD",
+            company_name="Delisted Co.",
+            company_name_kr=None,
+            sector=None,
+            market_cap=None,
+            currency="USD",
+            is_active=False,
+        ),
+    ]
+    for r in rows:
+        db_session.add(r)
+    await db_session.commit()
+    return [r.ticker for r in rows if r.is_active]
+
+
+@pytest_asyncio.fixture
+async def seed_risk_grades(db_session: AsyncSession, seed_tickers: list[str]) -> dict[str, float]:
+    """일부 종목에만 risk_grade 부여 (NULLS LAST 테스트를 위해).
+
+    worst_case_pct는 음수(=손실율). 절댓값이 클수록 리스크 높음.
+    예: AAPL=-0.03 (낮음), NVDA=-0.25 (높음)
+    """
+    from datetime import date
+    from decimal import Decimal
+
+    from app.db.models import Prediction, RiskGrade
+
+    risk_map = {
+        "AAPL": Decimal("-0.0300"),  # 가장 낮은 리스크
+        "MSFT": Decimal("-0.0800"),
+        "NVDA": Decimal("-0.2500"),  # 가장 높은 리스크
+        # GOOGL/AMZN/META는 risk_grade 없음 — NULL로 끝에 정렬
+    }
+
+    today = date.today()
+    for ticker, wc in risk_map.items():
+        pred = Prediction(
+            ticker=ticker,
+            base_date=today,
+            horizon_days=30,
+            q05_path=[],
+            q15_path=[],
+            worst_case_pct=wc,
+            model_name="test",
+            model_version="0.0.0",
+        )
+        db_session.add(pred)
+    await db_session.flush()
+
+    preds_by_ticker = {
+        p.ticker: p.prediction_id for p in (await _scalars_all(db_session, Prediction))
+    }
+    for ticker, wc in risk_map.items():
+        rg = RiskGrade(
+            ticker=ticker,
+            prediction_id=preds_by_ticker[ticker],
+            grade="HIGH" if abs(wc) > Decimal("0.10") else "LOW",
+            message_code="TEST",
+            worst_case_pct=wc,
+            as_of=today,
+        )
+        db_session.add(rg)
+    await db_session.commit()
+    return {k: float(v) for k, v in risk_map.items()}
+
+
+async def _scalars_all(session: AsyncSession, model):
+    from sqlalchemy import select
+
+    return list((await session.execute(select(model))).scalars().all())
+
+
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """get_db override한 in-process ASGI 테스트 클라이언트.
+
+    rate limit은 의도적으로 완화 — 테스트가 자연스럽게 한도에 부딪히지 않게.
+    """
+    from app.api.deps import get_db
+    from app.core.rate_limit import limiter
+    from app.main import app
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    limiter.enabled = False  # 테스트 중엔 rate limit off
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.clear()
+        limiter.enabled = True

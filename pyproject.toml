@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
+    "pydantic[email]>=2.9",
     "pydantic-settings>=2.6",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
@@ -15,12 +15,28 @@ dependencies = [
     "passlib[argon2]>=1.7.4",
     "python-jose[cryptography]>=3.3",
     "python-multipart>=0.0.12",
+    "yfinance>=0.2.40",
+    "pandas>=2.2",
+    "httpx>=0.27",
+    "slowapi>=0.1.9",
+]
+
+# 모델 추론(POST /v1/risk/sync/run-inference) 만 사용. 메인 서버는 torch 없이도 부팅.
+# 설치: uv sync --extra inference
+[project.optional-dependencies]
+inference = [
+    "torch>=2.2",
+    "pytorch-lightning>=2.4",
+    "pytorch-forecasting>=1.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "anyio>=4.0",
     "httpx>=0.27",
     "ruff>=0.7",
 ]
@@ -28,9 +44,19 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic 자동 생성 파일은 우리가 통제할 수 없음 — 제외.
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    # FastAPI에서 Depends/Query를 기본값으로 두는 건 공식 권장 패턴.
+    "B008",
+    # str+Enum이 우리 envelope에서 더 명시적. StrEnum 강제 안 함.
+    "UP042",
+    # Pydantic Generic[T]가 PEP 695보다 더 잘 지원됨.
+    "UP046",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
