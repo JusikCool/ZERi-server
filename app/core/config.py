@@ -4,7 +4,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# 명백히 안전하지 않은 JWT secret 값들 — 운영(env != dev) 진입 시 즉시 실패.
+# 명백히 안전하지 않은 JWT secret 값들 — 운영(prod) 진입 시 즉시 실패.
 _INSECURE_JWT_SECRETS: frozenset[str] = frozenset({
     "",
     "change-me",
@@ -13,6 +13,11 @@ _INSECURE_JWT_SECRETS: frozenset[str] = frozenset({
     "secret",
     "test",
 })
+
+# env 값 정규화 — 운영으로 인식할 토큰들.
+_PROD_ENV_TOKENS: frozenset[str] = frozenset({"prod", "production", "live"})
+_DEV_ENV_TOKENS: frozenset[str] = frozenset({"dev", "development", "local"})
+_TEST_ENV_TOKENS: frozenset[str] = frozenset({"test", "testing", "ci"})
 
 
 class Settings(BaseSettings):
@@ -50,26 +55,57 @@ class Settings(BaseSettings):
 
     @property
     def is_dev(self) -> bool:
-        return self.env == "dev"
+        return self.env.lower() in _DEV_ENV_TOKENS
+
+    @property
+    def is_prod(self) -> bool:
+        return self.env.lower() in _PROD_ENV_TOKENS
+
+    @property
+    def is_test(self) -> bool:
+        return self.env.lower() in _TEST_ENV_TOKENS
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
-        """env != dev/test 일 때 기본/취약 시크릿으로 부팅 금지.
+        """운영 환경(prod/production/live) 진입 시 안전성 검증.
 
         Railway/EC2 같은 운영 환경에서 JWT_SECRET 미설정 시 토큰 위조 가능.
+        CORS 와일드카드는 credentials=true 와 결합 시 인증 우회로 이어짐.
         부팅 단계에서 즉시 실패시켜 사고를 막는다.
         """
-        if self.env in {"dev", "test"}:
+        if not self.is_prod:
             return self
+
+        # JWT_SECRET 검증
         if self.jwt_secret.strip() in _INSECURE_JWT_SECRETS:
-            raise ValueError(
+            raise RuntimeError(
                 f"JWT_SECRET 가 운영 환경(env={self.env})에서 기본/취약 값으로 설정되어 있습니다. "
                 "최소 32바이트 random hex 로 갱신하세요: `openssl rand -hex 32`"
             )
         if len(self.jwt_secret) < 32:
-            raise ValueError(
-                f"JWT_SECRET 길이가 짧습니다(>=32 권장, 현재 {len(self.jwt_secret)})."
+            raise RuntimeError(
+                f"JWT_SECRET 길이가 짧습니다 (>=32 권장, 현재 {len(self.jwt_secret)}). "
+                "운영 환경에선 충분한 엔트로피가 필요합니다."
             )
+
+        # CORS_ORIGINS 검증
+        origins = self.cors_origins_list
+        if not origins:
+            raise RuntimeError(
+                "CORS_ORIGINS 가 비어있습니다. 운영 환경의 프런트 도메인을 명시하세요."
+            )
+        if "*" in origins:
+            raise RuntimeError(
+                "CORS_ORIGINS=* 는 credentials=true 와 결합 시 인증 우회를 허용합니다. "
+                "운영에선 명시적 도메인 화이트리스트만 사용하세요."
+            )
+        # localhost 만 있는 경우도 의심 — 운영인데 dev URL 로 부팅하려는 사고 차단
+        if all("localhost" in o or "127.0.0.1" in o for o in origins):
+            raise RuntimeError(
+                f"CORS_ORIGINS 가 localhost/127.0.0.1 만 포함합니다(현재: {origins}). "
+                "운영의 프런트 도메인을 추가하세요."
+            )
+
         return self
 
 
