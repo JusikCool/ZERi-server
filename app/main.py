@@ -68,6 +68,26 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def strip_trailing_slash(request: Request, call_next):
+    """들어오는 path 의 trailing slash 를 떼고 라우팅.
+
+    FastAPI 기본 `redirect_slashes=True` 가 307 redirect 로 처리하지만:
+    - POST/PATCH 의 body 가 redirect 후 손실되는 케이스
+    - CORS preflight 가 redirect 따라가지 않아 차단되는 케이스
+    이 두 가지를 회피하려면 redirect 가 아닌 path-rewrite 가 필요.
+
+    예: `GET /v1/me/watchlist/` → `GET /v1/me/watchlist` 로 그대로 처리.
+    루트(`/`) 와 path param 안의 `/` 는 영향 없음.
+    """
+    path = request.url.path
+    if path != "/" and path.endswith("/"):
+        stripped = path.rstrip("/")
+        request.scope["path"] = stripped
+        request.scope["raw_path"] = stripped.encode("utf-8")
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     """Attach a request_id to every request/response. Spec §0.2 envelope.meta.request_id.
 
