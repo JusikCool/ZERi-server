@@ -33,6 +33,8 @@ from app.db.models import (
     XaiExplanation,
 )
 from app.schemas.risk import (
+    PredictionHistoryData,
+    PredictionHistoryItem,
     RiskAttentionData,
     RiskGradeSection,
     RiskPathData,
@@ -45,7 +47,13 @@ from app.schemas.risk import (
 )
 from app.services.xai_templates import build_summary_narrative, feature_description
 
-__all__ = ["get_spotlight", "get_verdict", "get_path", "get_attention"]
+__all__ = [
+    "get_spotlight",
+    "get_verdict",
+    "get_path",
+    "get_attention",
+    "get_predictions_history",
+]
 
 
 # ---- spotlight ---------------------------------------------------------
@@ -285,6 +293,61 @@ async def get_path(session: AsyncSession, ticker: str) -> RiskPathData:
         horizon_days=pred.horizon_days,
         q05_path=list(pred.q05_path or []),
         q15_path=list(pred.q15_path or []),
+        quantile_paths=(
+            {k: list(v) for k, v in pred.quantile_paths.items()}
+            if pred.quantile_paths
+            else None
+        ),
+    )
+
+
+async def get_predictions_history(
+    session: AsyncSession,
+    ticker: str,
+    limit: int = 100,
+) -> PredictionHistoryData:
+    """티커의 모든 예측 기록 — base_date 내림차순 (최신 → 과거)."""
+    ticker_upper = ticker.upper()
+
+    t = await session.get(Ticker, ticker_upper)
+    if t is None or not t.is_active:
+        raise AppException(
+            ErrorCode.TICKER_NOT_FOUND,
+            details={"ticker": ticker_upper},
+        )
+
+    stmt = (
+        select(Prediction)
+        .where(Prediction.ticker == ticker_upper)
+        .order_by(Prediction.base_date.desc())
+        .limit(limit)
+    )
+    preds = (await session.execute(stmt)).scalars().all()
+
+    items = [
+        PredictionHistoryItem(
+            base_date=p.base_date,
+            horizon_days=p.horizon_days,
+            q05_path=list(p.q05_path or []),
+            q15_path=list(p.q15_path or []),
+            quantile_paths=(
+                {k: list(v) for k, v in p.quantile_paths.items()}
+                if p.quantile_paths
+                else None
+            ),
+            worst_case_pct=(
+                float(p.worst_case_pct) if p.worst_case_pct is not None else None
+            ),
+            model_name=p.model_name,
+            model_version=p.model_version,
+        )
+        for p in preds
+    ]
+
+    return PredictionHistoryData(
+        ticker=ticker_upper,
+        count=len(items),
+        items=items,
     )
 
 
