@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -44,6 +44,20 @@ class LatestPricesData(BaseModel):
     fetched: int = Field(..., description="실제 응답 받은 종목 수")
     missing: list[str] = Field(default_factory=list, description="응답 누락 종목")
     items: list[LatestPriceItem]
+
+
+class HistoricalPriceItem(BaseModel):
+    trade_date: date
+    close: float
+
+
+class HistoricalPricesData(BaseModel):
+    ticker: str
+    days: int = Field(..., description="요청한 일수 (실제 반환된 행 수는 items 길이)")
+    items: list[HistoricalPriceItem] = Field(
+        ...,
+        description="오래된 → 최근 순. close 만 노출 (OHLC 전체는 별도 endpoint 예정).",
+    )
 
 
 async def _get_active_tickers(session: AsyncSession) -> dict[str, Ticker]:
@@ -92,6 +106,47 @@ async def _upsert_prices(
         )
         await session.execute(stmt)
     await session.commit()
+
+
+@router.get(
+    "/{ticker}/history",
+    response_model=ApiResponse[HistoricalPricesData],
+    summary="과거 종가 N일 (DB 조회, yfinance 미호출) — 차트 컨텍스트용",
+)
+async def get_price_history(
+    ticker: str,
+    days: int = Query(30, ge=1, le=365, description="최근 며칠 (영업일 기준)"),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[HistoricalPricesData]:
+    ticker_upper = ticker.upper()
+
+    t = await session.get(Ticker, ticker_upper)
+    if t is None or not t.is_active:
+        raise AppException(
+            ErrorCode.TICKER_NOT_FOUND,
+            details={"ticker": ticker_upper},
+        )
+
+    stmt = (
+        select(Price.trade_date, Price.close_price)
+        .where(Price.ticker == ticker_upper)
+        .order_by(Price.trade_date.desc())
+        .limit(days)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    items = [
+        HistoricalPriceItem(trade_date=r.trade_date, close=float(r.close_price))
+        for r in reversed(rows)
+    ]
+
+    return ApiResponse(
+        data=HistoricalPricesData(
+            ticker=ticker_upper,
+            days=days,
+            items=items,
+        )
+    )
 
 
 @router.get(

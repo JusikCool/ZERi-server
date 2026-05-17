@@ -131,6 +131,34 @@ class RiskPathData(BaseModel):
     horizon_days: int
     q05_path: list[float]
     q15_path: list[float]
+    # 전체 19개 분위수 {"0.05": [...], "0.10": [...], ..., "0.95": [...]}
+    # 클라이언트가 다중 분위수 라인을 토글하며 그릴 수 있게 노출.
+    # DB 에 없으면 None.
+    quantile_paths: dict[str, list[float]] | None = None
+
+
+# ---- 티커별 전체 예측 이력 -------------------------------------------------
+
+
+class PredictionHistoryItem(BaseModel):
+    """단일 예측 기록 (한 base_date 의 결과)."""
+
+    base_date: date
+    horizon_days: int
+    q05_path: list[float]
+    q15_path: list[float]
+    quantile_paths: dict[str, list[float]] | None = None
+    worst_case_pct: float | None = None
+    model_name: str
+    model_version: str
+
+
+class PredictionHistoryData(BaseModel):
+    """GET /v1/risk/{ticker}/predictions — 티커의 모든 과거 예측."""
+
+    ticker: str
+    count: int
+    items: list[PredictionHistoryItem]
 
 
 class RiskAttentionData(BaseModel):

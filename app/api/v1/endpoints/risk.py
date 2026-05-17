@@ -27,6 +27,7 @@ from sqlalchemy import select
 
 from app.db.models import Price, Ticker
 from app.schemas.risk import (
+    PredictionHistoryData,
     RiskAttentionData,
     RiskPathData,
     RiskVerdictData,
@@ -402,6 +403,27 @@ async def get_path_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RiskPathData]:
     data = await risk_query_service.get_path(session, ticker)
+    return ApiResponse(data=data)
+
+
+# ---- GET /{ticker}/predictions (티커의 모든 예측 이력) ----------------------
+
+
+@router.get(
+    "/{ticker}/predictions",
+    response_model=ApiResponse[PredictionHistoryData],
+    summary="티커별 전체 예측 이력 — base_date 내림차순",
+)
+@limiter.limit("20/minute")
+async def get_predictions_history_endpoint(
+    request: Request,
+    ticker: str,
+    limit: int = 100,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[PredictionHistoryData]:
+    data = await risk_query_service.get_predictions_history(
+        session, ticker, limit=limit,
+    )
     return ApiResponse(data=data)
 
 
