@@ -15,7 +15,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_operator
 from app.db.models import Ticker
 from app.pipelines.tickers.seed import SEED_TICKER_SYMBOLS, SEED_TICKERS
 from app.schemas.common import ApiResponse
@@ -102,6 +102,7 @@ async def _upsert_tickers(session: AsyncSession, payloads: list[dict[str, Any]])
 @router.post(
     "/sync/{target}",
     response_model=ApiResponse[TickerSyncData],
+    dependencies=[Depends(require_operator)],
     summary="시드 또는 단일 종목 메타데이터 갱신 (yfinance → DB upsert)",
 )
 async def sync_tickers(

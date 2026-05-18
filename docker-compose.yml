@@ -31,6 +31,9 @@ services:
       ACCESS_TOKEN_EXPIRES_IN: ${ACCESS_TOKEN_EXPIRES_IN:-3600}
       REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-1209600}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set}
+      # 운영자 / cron 전용 키 — /v1/*/sync* 라우트가 X-Operator-Key 로 검증.
+      # 운영(env=prod) 진입 시 config.py 가 빈 값/짧은 값/JWT_SECRET 동일성을 거부.
+      OPERATOR_API_KEY: ${OPERATOR_API_KEY:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
     depends_on:
       db:
