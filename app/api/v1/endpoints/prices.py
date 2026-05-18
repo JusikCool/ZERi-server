@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_operator
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.db.models import Price, Ticker
@@ -62,15 +62,11 @@ class HistoricalPricesData(BaseModel):
 
 async def _get_active_tickers(session: AsyncSession) -> dict[str, Ticker]:
     """tickers 테이블에서 `is_active=true` 전체 조회 → {ticker: Ticker} 딕셔너리."""
-    result = await session.execute(
-        select(Ticker).where(Ticker.is_active.is_(True))
-    )
+    result = await session.execute(select(Ticker).where(Ticker.is_active.is_(True)))
     return {t.ticker: t for t in result.scalars().all()}
 
 
-async def _upsert_prices(
-    session: AsyncSession, raw: list[dict[str, Any]]
-) -> None:
+async def _upsert_prices(session: AsyncSession, raw: list[dict[str, Any]]) -> None:
     """yfinance OHLCV → prices 테이블 upsert. PK (trade_date, ticker).
 
     asyncpg prepared statement 인자 한도 = 32767. row 당 7 컬럼이라 안전 chunk = 4000행.
@@ -225,6 +221,7 @@ class HistorySyncData(BaseModel):
 @router.post(
     "/sync-history/{target}",
     response_model=ApiResponse[HistorySyncData],
+    dependencies=[Depends(require_operator)],
     summary=(
         "OHLCV history 일괄 적재 — 추론 입력용. target=all 또는 단일 ticker. "
         "period 기본 '1y' (yfinance period 표기: 1mo/3mo/6mo/1y/2y/5y/max)."

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_operator
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.db.models import MacroIndicator
@@ -86,6 +86,7 @@ async def _upsert_observations(session: AsyncSession, code: str, observations: l
 @router.post(
     "/sync/{target}",
     response_model=ApiResponse[MacroSyncData],
+    dependencies=[Depends(require_operator)],
     summary="시드 또는 단일 시리즈 FRED → DB upsert (기본: 최근 30일)",
 )
 async def sync_macro(
