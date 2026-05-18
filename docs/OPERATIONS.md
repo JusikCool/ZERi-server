@@ -160,7 +160,7 @@ curl -s -o /dev/null -w "HTTP %{http_code}\n" \
 - [x] EC2 `.env` ← 위 절차로 완료
 - [x] 컨테이너 재기동 ← 위 절차로 완료
 - [x] `.env.bak` 삭제 ← 위 절차로 완료
-- [ ] **GitHub Repository Secrets** (`OPERATOR_API_KEY`) — PR 2 cron이 사용
+- [ ] **GitHub Repository Secrets** (`OPERATOR_API_KEY`) — GitHub Actions cron 이 사용 (§6)
 - [ ] **협업자에게 알림** (값 X, 사실만 — 아래 §4 참고)
 
 GitHub Secrets 등록:
@@ -272,7 +272,98 @@ ls -lh /home/ubuntu/ZERi-server/models/m3.ckpt
 
 ---
 
-## 6. 자주 쓰는 한 줄 명령
+## 6. GitHub Actions Cron (자동 배치) ⭐
+
+매일 새벽 자동으로 가격/거시지표/모델 추론을 갱신합니다. 워크플로 파일은 `.github/workflows/`.
+
+### 6.1 잡 구성
+
+| 워크플로 파일 | 주기 | 호출 endpoint | 비고 |
+|---|---|---|---|
+| `daily-batch.yml` | 매일 KST 06:30 | `POST /v1/prices/sync-history/all` → `POST /v1/macro/sync/all` → `POST /v1/risk/sync/run-tft-m3` | 미국 시장 마감 후 |
+| `weekly-tickers.yml` | 매주 일요일 KST 06:00 | `POST /v1/tickers/sync/all` | 시가총액 갱신 |
+
+### 6.2 인증
+
+모든 호출에 `X-Operator-Key` 헤더 부착. 값은 GitHub Repository Secrets 에 등록:
+
+- `OPERATOR_API_KEY` — EC2 `.env` 의 동일 값
+- `API_BASE_URL` — 예: `http://3.34.46.157:8000`
+
+워크플로에서 `${{ secrets.OPERATOR_API_KEY }}` 로 주입.
+
+### 6.3 수동 실행 (workflow_dispatch)
+
+cron 시각까지 기다리지 않고 즉시 trigger 가능:
+
+1. GitHub → repo → **Actions** 탭
+2. 좌측 사이드바에서 워크플로 선택 (예: "Daily batch (prices + macro + TFT inference)")
+3. 우상단 **Run workflow** 버튼 → 브랜치 선택 → **Run workflow**
+4. 1~3 분 후 결과 확인 (run 클릭 → 각 step 로그)
+
+> daily-batch 의 `skip_inference` 옵션: 추론 step 건너뛰고 sync 만 검증할 때 사용.
+
+### 6.4 실행 결과 확인
+
+Actions 탭에서 각 run 을 클릭하면:
+
+- 각 step 의 stdout (요청 / 응답 JSON)
+- `Upload response logs` step 의 artifact → 다운로드 가능 (`*.json`)
+- 실패 시 step 별로 빨강색 X → 어디서 막혔는지 즉시 확인
+
+본인 GitHub 알림 설정에 따라 실패 시 이메일 자동 발송.
+
+### 6.5 cron 시간 변경 / 추가
+
+워크플로 파일의 `schedule.cron` 을 수정. **UTC 기준** (KST = UTC+9):
+
+| 원하는 KST | UTC cron |
+|---|---|
+| 매일 06:30 | `30 21 * * *` |
+| 매일 23:00 | `0 14 * * *` |
+| 주말 제외 매일 09:00 | `0 0 * * 1-5` |
+| 매주 일요일 06:00 | `0 21 * * 6` |
+
+수정 후 push → 다음 cron 시각부터 자동 적용.
+
+⚠️ GitHub Actions cron 은 정확하지 않음 — 트래픽 많을 때 최대 1시간 지연 가능. 5분 단위 정밀 timing 이 필요하면 EC2 crontab 으로 옮길 것.
+
+### 6.6 cron 비활성화 / 임시 중단
+
+장애 상황 등에서 cron 만 잠시 멈추고 싶을 때:
+
+1. Actions 탭 → 워크플로 선택 → 우상단 `…` → **Disable workflow**
+2. 복구 후 동일 메뉴 → **Enable workflow**
+
+코드 수정 없이 즉시 적용. cron schedule 만 멈추고 `workflow_dispatch` (수동 실행) 도 같이 비활성화됨.
+
+### 6.7 트러블슈팅
+
+#### 6.7.1 `secrets configured` step 에서 실패
+
+```
+::error::API_BASE_URL 또는 OPERATOR_API_KEY 가 GitHub Secrets 에 등록되지 않았습니다.
+```
+
+→ Settings → Secrets and variables → Actions 에서 두 시크릿 확인.
+
+#### 6.7.2 health check 에서 실패 (`curl: (28) Operation timed out`)
+
+EC2 가 죽었거나 8000 포트 차단. EC2 Instance Connect 로 들어가서 `docker compose ps` 확인.
+
+#### 6.7.3 sync step 에서 401
+
+GitHub Secrets 의 `OPERATOR_API_KEY` 와 EC2 `.env` 의 값이 다름. 한 쪽이 로테이션됐는데 다른 쪽 미반영. §3 로테이션 절차 마지막 단계(GitHub Secrets 갱신) 확인.
+
+#### 6.7.4 inference step 에서 500
+
+가능성 1: 모델 파일 없음 → EC2 에서 `ls -lh /home/ubuntu/ZERi-server/models/m3.ckpt`
+가능성 2: prices/macro 가 비어 있음 → step 순서상 발생 어려움. 그래도 의심되면 EC2 에서 `docker compose exec db psql -U before -d before -c "SELECT MAX(trade_date) FROM prices;"` 확인.
+가능성 3: 추론 timeout (15분 초과) → `daily-batch.yml` 의 `timeout-minutes` 늘리기.
+
+---
+
+## 7. 자주 쓰는 한 줄 명령
 
 ```bash
 # 컨테이너 상태
@@ -314,6 +405,7 @@ git stash push docker-compose.yml -m "ec2-tweak" \
 - AWS Parameter Store / Secrets Manager로 .env 시크릿 이전
 - 만료 refresh token sweep 별도 cron 분리 (현재는 startup hook)
 - 감사로그 (`audit_logs` 테이블) — 운영자 동작 추적
-- GitHub Actions cron (PR 2) — 매일 모델 추론 자동화
+- T+30 prediction outcome 평가 endpoint + cron 추가 (예측 30일 후 실측 비교)
+- ~~GitHub Actions cron (매일 모델 추론 자동화)~~ ✅ §6 에서 처리
 
 상세한 결정 근거는 `docs/ISSUES.md`, `docs/BETTER.md` 참고.
