@@ -4,25 +4,32 @@
 
 스택: FastAPI + async SQLAlchemy + Alembic + PostgreSQL 16 + PyTorch (서버 내장 TFT 추론).
 
+**라이브 배포**: http://3.34.46.157:8000 ([Swagger](http://3.34.46.157:8000/docs))
+
 문서 (`docs/`):
 
 - [API.md](docs/API.md) — 도메인별 엔드포인트 명세 (스펙 본문)
 - [api_spec.html](docs/api_spec.html) — 요청/응답 JSON 예시 일람 (프런트·외부 협업용)
+- **[OPERATIONS.md](docs/OPERATIONS.md)** — **운영 가이드 (EC2 배포, OPERATOR_API_KEY 로테이션, 트러블슈팅)**
+- [OPERATOR_AUTH_HANDOFF.md](docs/OPERATOR_AUTH_HANDOFF.md) — 운영자 API key 가드 도입 배경/사용법
 - [BETTER.md](docs/BETTER.md) — 적용한 설계·구현 패턴
 - [ISSUES.md](docs/ISSUES.md) — 마주친 이슈와 해결 과정 + 미해결 부채 목록
 
-진척도 (2026-05-16):
+진척도 (2026-05-19):
 
 - ✅ Phase 0 — 공통 인프라 (envelope, error codes, exception handlers, DB session, request_id)
-- ✅ tickers — 시드 메타 sync, 자동완성 검색 (현재 시드 6 → 50 확장 예정)
-- ✅ prices — yfinance OHLCV 적재
+- ✅ tickers — 시드 메타 sync, 자동완성 검색 (시드 50종목 + ^VIX/^IXIC 시장 인덱스)
+- ✅ prices — yfinance OHLCV 적재 (latest + history 1년치)
 - ✅ macro — FRED 13개 시리즈 적재 + 시계열 조회
 - ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
 - ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의
 - ✅ /me/watchlist — GET / POST / DELETE, 안전 상한 100, 중복·비활성 차단, 멱등 삭제, rate limit
 - ✅ risk — spotlight / verdict / path / attention 4개 GET + sync 5개 POST. **서버 내장 TFT m3 추론** (`/sync/run-tft-m3`) → predictions / risk_grades / xai_explanations 자동 적재. XAI 자연어 설명 + summary_narrative 응답 포함.
 - ✅ /me/history — list / stats / detail 3개 GET. `record=true` 시 verdict 조회 스냅샷을 analysis_history 에 INSERT.
-- ⏳ **미구현 (LIVE 전 처리 필요)** — F-MODEL endpoints (`/v1/models/honesty`), 백테스트 계산 로직 (Kupiec / Hit rate), T+30 outcome 평가 cron (`POST /v1/history/evaluate`), 매일 자동 sync/inference cron, Kronos 통합. 자세한 부채 목록은 [ISSUES.md](docs/ISSUES.md) 하단 참조.
+- ✅ **operator API key 가드** — `/sync/*` 8개 라우트가 `X-Operator-Key` 헤더 검증 (PR #19). 운영자/cron 전용. cron 자동화 사전 단계.
+- ✅ **운영 안전성** — prod 환경에서 약한 시크릿 / `CORS=*` / `JWT==OPERATOR` 부팅 거부. compose에 `${VAR:?}` 강제. dev/운영 compose 분리.
+- ✅ **EC2 배포** — Ubuntu 26.04, Docker Compose, public 8000. 배포 검증 완료.
+- ⏳ **다음 단계** — **PR 2: GitHub Actions cron** (매일 새벽 자동 sync/inference). 그 외 부채: F-MODEL endpoints (`/v1/models/honesty`), 백테스트 계산 로직, T+30 outcome 평가 cron, Kronos 통합, HTTPS, AWS Secrets Manager 이전. 자세한 부채 목록은 [ISSUES.md](docs/ISSUES.md) 하단 참조.
 
 ## 스택
 
@@ -101,33 +108,35 @@ schema     → Pydantic DTO (API 계약).
 
 ## 배포
 
-배포 진입 준비는 `feature/deploy-readiness` 에서 처리 — 핵심 변화 4가지:
+**현재 라이브**: http://3.34.46.157:8000 (AWS EC2, Ubuntu 26.04)
 
-1. **`scripts/entrypoint.sh`** 가 컨테이너 부팅 시 `alembic upgrade head` 후 uvicorn 실행. DB 스키마 불일치 상태에서 서버 안 띄움.
-2. **`$PORT` 동적** — Railway/Cloud Run 등 PORT 주입 환경 호환. 미주입 시 8000 폴백.
-3. **운영 시크릿 가드** — `ENV != dev/test` 일 때 `JWT_SECRET` 가 기본/취약 값이면 `_validate_production_secrets` 가 부팅 단계에서 거부. 사고를 부팅 단계에서 막음.
-4. **`HEALTHCHECK`** — Dockerfile 에 `/health` 폴링 추가. Railway 헬스체크 자동 인식.
+### 운영 가이드는 별도 문서 ⭐
+
+배포·재배포·시크릿 로테이션·트러블슈팅 등 운영 절차는 **[docs/OPERATIONS.md](docs/OPERATIONS.md)** 에 정리. 협업자 둘 다 참고.
+
+핵심 요약:
+
+- 컨테이너 부팅 → `scripts/entrypoint.sh` 가 `alembic upgrade head` 후 uvicorn 실행
+- `$PORT` 동적 (Railway/Cloud Run 호환, 미주입 시 8000 폴백)
+- 운영 시크릿 가드 — `ENV=prod` 시 약한 `JWT_SECRET` / 빈 `OPERATOR_API_KEY` / `CORS=*` 부팅 거부
+- 운영용 compose: `docker compose -f docker-compose.yml up -d` (override.yml 제외)
+- dev compose: `docker compose up` (override.yml 자동 머지로 `--reload` + 5432 노출)
 
 ### 운영 환경에서 필요한 환경변수
 
 ```
-ENV=prod                            # 보안 검증 활성화
-DATABASE_URL=postgresql+asyncpg://...
-JWT_SECRET=<openssl rand -hex 32>   # 32바이트 이상 random hex
-CORS_ORIGINS=https://before.app
+ENV=prod                                   # 보안 검증 활성화
+POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+JWT_SECRET=<openssl rand -hex 32>          # 32자 이상 random hex
+OPERATOR_API_KEY=<openssl rand -hex 32>    # 32자 이상, JWT_SECRET 와 달라야 함
+CORS_ORIGINS=https://before.app            # 와일드카드 금지, localhost-only 금지
 FRED_API_KEY=...
-PORT=8000                            # Railway 는 자동 주입
+PORT=8000                                  # Railway 는 자동 주입
 ```
 
-### 로컬에서 운영 모드 시뮬레이션
+### 시크릿 전달 정책
 
-```bash
-ENV=prod \
-JWT_SECRET=$(openssl rand -hex 32) \
-docker compose up --build
-```
-
-`JWT_SECRET` 누락 시 컨테이너가 부팅 단계에서 종료 — 의도된 동작.
+`OPERATOR_API_KEY` 등 시크릿 **값 자체는 슬랙/이메일/LLM 채팅 등 외부 채널로 보내지 않습니다.** 협업자는 EC2 Instance Connect로 들어가 `grep ... .env`로 직접 확인. 상세: [OPERATIONS.md §3-4](docs/OPERATIONS.md).
 
 ---
 

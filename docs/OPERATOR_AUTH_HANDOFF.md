@@ -3,6 +3,9 @@
 > 본 PR은 cron/GitHub Actions로 매일 모델 추론을 자동화하기 위한 **PR 1단계 (보안 가드)**.
 > PR 2단계(GitHub Actions workflow)는 본 PR 머지 후 진행.
 
+> ✅ **배포 완료 (2026-05-19)** — EC2 `3.34.46.157:8000` 에 가드 적용됨. 외부에서 키 없이 `/sync/*` 호출 시 401 떨어짐.
+> ⚙️ **운영 절차** (재배포, 키 로테이션, 트러블슈팅): [`docs/OPERATIONS.md`](OPERATIONS.md) 참고.
+
 ---
 
 ## 1. 한 줄 요약
@@ -188,3 +191,63 @@ GitHub Actions Secrets에 미리 등록 필요:
 - [ ] GET read 라우트에 가드가 잘못 붙지 않았는지
 - [ ] `docs/API.md` §2 헤더에 인증 안내 추가됐는지
 - [ ] PR 2(workflow) 진행 전 본 PR 먼저 머지하는지 — **순서 절대 어기지 말 것** (보안 시퀀스)
+
+---
+
+## 11. 시크릿 전달 정책 ⭐ (협업자 둘 다 필독)
+
+`OPERATOR_API_KEY` 값 자체를 **외부 채널(슬랙·이메일·카톡·LLM 채팅·이슈)로 절대 보내지 않습니다.**
+
+### 채택한 방식 — "사실만 알리고, 값은 EC2에서 직접 확인"
+
+본인(키 갱신한 사람)이 협업자에게 보낼 슬랙 메시지 예시:
+
+```
+OPERATOR_API_KEY 갱신했습니다.
+- 일시: 2026-05-19 14:30 KST
+- 사유: 노출 / 정기 정책 / 협업자 이탈 등
+- 갱신 위치: EC2 .env + GitHub Secrets
+- 옛 키는 더 이상 동작 안 함
+
+값 직접 확인 필요 시:
+1. AWS Console → EC2 → Instance Connect
+2. cd /home/ubuntu/ZERi-server
+3. grep OPERATOR_API_KEY .env
+```
+
+**값 자체는 어디에도 평문으로 노출하지 않습니다.**
+
+### 왜 이 방식?
+
+| 채널 | 위험 | 본 채택 방식 |
+|---|---|---|
+| 슬랙/카톡 DM 평문 | 검색·캡처·아카이브에 영구 보존 | ❌ 사용 안 함 |
+| 이메일 평문 | 메일 서버 영구 보존 | ❌ |
+| GitHub Issue/PR 본문 | 인덱싱 + 영구 보존 | ❌ |
+| LLM 채팅 (ChatGPT/Claude 등) | 학습/로그 가능성 | ❌ |
+| **EC2 Instance Connect 로 직접 확인** | 키가 외부 채널 X | ✅ 채택 |
+
+### 키 로테이션 절차
+
+상세 절차는 **[OPERATIONS.md §3 OPERATOR_API_KEY 로테이션](OPERATIONS.md)** 참고.
+
+요약 4단계:
+1. EC2 접속 → `openssl rand -hex 32` → `.env` 갱신 → 컨테이너 재기동
+2. `.env.bak` 삭제 (옛 키 디스크 잔존 방지)
+3. **GitHub Secrets** 의 `OPERATOR_API_KEY` 도 같은 값으로 update (PR 2 cron이 사용)
+4. 협업자에게 "갱신했다" 사실만 알림 — 값 X
+
+### 긴급 상황 — 협업자가 EC2 접근 불가일 때 (예외)
+
+[OneTimeSecret.com](https://onetimesecret.com) 같은 1회용 시크릿 공유 사용:
+
+1. 키 입력 + 24시간 만료
+2. 한 번만 열리는 URL 슬랙으로 전송
+3. 협업자가 열고 → 폭파됨
+4. 협업자가 "이미 열려있었어요"라고 하면 = 가로채진 것 → 즉시 다시 로테이션
+
+---
+
+## 12. 운영 절차 전반은 별도 문서
+
+EC2 배포·재배포·트러블슈팅·로테이션 등 운영 동작 전반은 **[OPERATIONS.md](OPERATIONS.md)** 에 모아뒀습니다. 본 문서는 *왜 가드를 만들었는지*에 집중.
