@@ -1,0 +1,67 @@
+# 주 1회 종목 메타 갱신 — yfinance 에서 시가총액·통화·섹터 받아 tickers 테이블 upsert.
+#
+# daily-batch 와 분리한 이유:
+#   - 종목 자체는 거의 안 바뀌고 시가총액만 변동
+#   - 매일 돌릴 필요 X (yfinance rate limit 절감)
+#   - 분리하면 일일 잡 실패 시 영향 없음
+#
+# 실행 시각: 매주 일요일 KST 06:00 (= UTC 21:00 토요일)
+
+name: Weekly tickers metadata sync
+
+on:
+  schedule:
+    # 매주 일요일 KST 06:00 = UTC 토요일 21:00
+    - cron: '0 21 * * 6'
+  workflow_dispatch:
+
+concurrency:
+  group: weekly-tickers
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync ticker metadata (yfinance → DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      API_BASE: ${{ secrets.API_BASE_URL }}
+      OP_KEY: ${{ secrets.OPERATOR_API_KEY }}
+
+    steps:
+      - name: Verify secrets are configured
+        run: |
+          if [ -z "$API_BASE" ] || [ -z "$OP_KEY" ]; then
+            echo "::error::API_BASE_URL 또는 OPERATOR_API_KEY 가 GitHub Secrets 에 등록되지 않았습니다."
+            exit 1
+          fi
+
+      - name: Health check
+        timeout-minutes: 1
+        run: |
+          set -e
+          curl -fsS --max-time 30 "$API_BASE/health"
+          echo ""
+
+      - name: Sync all ticker metadata
+        timeout-minutes: 8
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/tickers/sync/all"
+          response=$(curl -fsS --max-time 450 -X POST \
+            "$API_BASE/v1/tickers/sync/all" \
+            -H "X-Operator-Key: $OP_KEY")
+          echo "$response" | tee /tmp/tickers.json
+          synced=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('synced', 'unknown'))")
+          failed=$(echo "$response" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['data'].get('failed', [])))")
+          echo "✓ Tickers synced: $synced, failed: $failed"
+
+      - name: Upload response log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-tickers-${{ github.run_number }}
+          path: /tmp/tickers.json
+          if-no-files-found: ignore
+          retention-days: 14

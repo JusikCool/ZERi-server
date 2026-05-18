@@ -1,0 +1,123 @@
+# 매일 새벽 자동 배치 — 가격/거시지표 적재 후 TFT 모델 추론.
+#
+# 실행 시각: KST 06:30 (= UTC 21:30 전날)
+#   - 미국 동부 16:00 NYSE 마감 후 약 30분
+#   - yfinance 정리 시차 + 거시지표 발표 반영 여유
+#
+# 인증: X-Operator-Key 헤더 (PR #19 가드).
+#   - GitHub Secrets:
+#       OPERATOR_API_KEY  = EC2 .env 의 동일 값
+#       API_BASE_URL      = http://3.34.46.157:8000
+#
+# 의존성 그래프 (한 job 안에서 순차):
+#   prices 적재 → macro 적재 → TFT 추론
+#   앞 step 실패 시 다음 step 자동 skip.
+#
+# 디버깅: GitHub UI Actions 탭 → "Daily batch" → "Run workflow" 버튼으로 수동 trigger.
+
+name: Daily batch (prices + macro + TFT inference)
+
+on:
+  schedule:
+    # UTC 표기. KST = UTC+9 → KST 06:30 = UTC 21:30 (전날)
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_inference:
+        description: 'TFT 추론 step 건너뛰기 (sync 만 검증할 때)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+# 동시 실행 방지 — 이전 run 이 진행 중이면 자동 취소.
+concurrency:
+  group: daily-batch
+  cancel-in-progress: false
+
+jobs:
+  inference:
+    name: prices → macro → TFT inference
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      API_BASE: ${{ secrets.API_BASE_URL }}
+      OP_KEY: ${{ secrets.OPERATOR_API_KEY }}
+
+    steps:
+      # 사전 점검 — Secrets 가 비어있으면 즉시 실패 (조용히 200 떨어지는 사고 방지)
+      - name: Verify secrets are configured
+        run: |
+          if [ -z "$API_BASE" ] || [ -z "$OP_KEY" ]; then
+            echo "::error::API_BASE_URL 또는 OPERATOR_API_KEY 가 GitHub Secrets 에 등록되지 않았습니다."
+            exit 1
+          fi
+          echo "✓ Secrets configured"
+
+      # API 살아있는지 확인
+      - name: Health check
+        timeout-minutes: 1
+        run: |
+          set -e
+          echo "GET $API_BASE/health"
+          curl -fsS --max-time 30 "$API_BASE/health" | tee /tmp/health.json
+          echo ""
+
+      # ─── Step 1: 가격 OHLCV 1년치 history 적재 ─────────────────────────
+      - name: Sync prices history (all active tickers)
+        id: prices
+        timeout-minutes: 10
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/prices/sync-history/all"
+          response=$(curl -fsS --max-time 540 -X POST \
+            "$API_BASE/v1/prices/sync-history/all" \
+            -H "X-Operator-Key: $OP_KEY")
+          echo "$response" | tee /tmp/prices.json
+          rows=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('rows_inserted', 'unknown'))")
+          echo "✓ Prices upserted: $rows rows"
+
+      # ─── Step 2: 거시지표 (FRED) 최근 30일 적재 ────────────────────────
+      - name: Sync macro indicators
+        id: macro
+        timeout-minutes: 5
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/macro/sync/all?lookback_days=30"
+          response=$(curl -fsS --max-time 270 -X POST \
+            "$API_BASE/v1/macro/sync/all?lookback_days=30" \
+            -H "X-Operator-Key: $OP_KEY")
+          echo "$response" | tee /tmp/macro.json
+          synced=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('synced', 'unknown'))")
+          echo "✓ Macro series synced: $synced"
+
+      # ─── Step 3: TFT 모델 추론 → predictions/risk_grades/xai 갱신 ────────
+      - name: Run TFT m3 inference
+        id: inference
+        if: ${{ inputs.skip_inference != 'true' }}
+        timeout-minutes: 15
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/risk/sync/run-tft-m3"
+          response=$(curl -fsS --max-time 840 -X POST \
+            "$API_BASE/v1/risk/sync/run-tft-m3" \
+            -H "X-Operator-Key: $OP_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "$response" | tee /tmp/inference.json
+          n_tickers=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('n_tickers_with_data', 'unknown'))")
+          n_preds=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('predictions_upserted', 'unknown'))")
+          echo "✓ Inference complete — tickers=$n_tickers, predictions=$n_preds"
+
+      # 실패해도 직전 응답 파일들 업로드 — 디버깅용
+      - name: Upload response logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-batch-responses-${{ github.run_number }}
+          path: /tmp/*.json
+          if-no-files-found: ignore
+          retention-days: 14
