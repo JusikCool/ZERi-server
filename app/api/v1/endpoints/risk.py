@@ -17,15 +17,15 @@ Rate limit (spec §16):
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_optional_user
+from app.api.deps import get_db, get_optional_user, require_operator
+from app.core.error_codes import ErrorCode
+from app.core.exceptions import AppException
 from app.core.rate_limit import limiter
-from app.db.models import User
+from app.db.models import Price, Ticker, User
 from app.schemas.common import ApiResponse
-from sqlalchemy import select
-
-from app.db.models import Price, Ticker
 from app.schemas.risk import (
     PredictionHistoryData,
     RiskAttentionData,
@@ -46,12 +46,12 @@ from app.schemas.risk import (
 from app.services import risk_query_service
 from app.services.feature_engineering import MARKET_INDEX_TICKERS
 from app.services.risk_inference_baseline import run_baseline_inference
-from app.services.tft_m3_inference import run_tft_m3_inference
+from app.services.risk_inference_runner import run_inference
 from app.services.risk_ingest_service import (
     ingest_predictions_from_csv,
     ingest_predictions_from_json,
 )
-from app.services.risk_inference_runner import run_inference
+from app.services.tft_m3_inference import run_tft_m3_inference
 from app.services.xai_ingest_service import ingest_xai_from_csv
 
 router = APIRouter()
@@ -64,6 +64,7 @@ router = APIRouter()
     "/sync/baseline",
     response_model=ApiResponse[SyncBaselineData],
     summary="모델 추론 결과(CSV) 적재 — predictions / risk_grades / xai 갱신",
+    dependencies=[Depends(require_operator)],
 )
 async def sync_baseline(
     payload: SyncBaselineRequest,
@@ -102,6 +103,7 @@ async def sync_baseline(
 @router.post(
     "/sync/run-tft-m3",
     response_model=ApiResponse[RunTftM3Data],
+    dependencies=[Depends(require_operator)],
     summary=(
         "DB(prices+macro) → m3.ckpt 직접 추론 → predictions/risk_grades/xai 저장. "
         "서버 내장 모델 (app/ml/m3_tft + models/m3.ckpt). 외부 의존성 0."
@@ -164,6 +166,7 @@ async def sync_run_tft_m3(
 @router.post(
     "/sync/run-db-inference",
     response_model=ApiResponse[RunDbInferenceData],
+    dependencies=[Depends(require_operator)],
     summary="DB(prices+macro) → 통계 baseline 추론 → predictions/risk_grades/xai 저장",
 )
 async def sync_run_db_inference(
@@ -172,11 +175,16 @@ async def sync_run_db_inference(
 ) -> ApiResponse[RunDbInferenceData]:
     # 1) base_date 결정: 미지정 시 prices 최신 trade_date
     if payload.base_date is None:
-        latest = await session.scalar(select(Price.trade_date).order_by(Price.trade_date.desc()).limit(1))
+        latest = await session.scalar(
+            select(Price.trade_date).order_by(Price.trade_date.desc()).limit(1)
+        )
         if latest is None:
             raise AppException(
                 ErrorCode.PREDICTION_NOT_READY,
-                message="prices 테이블이 비어있습니다. POST /v1/prices/sync-history/all 먼저 호출하세요.",
+                message=(
+                    "prices 테이블이 비어있습니다. "
+                    "POST /v1/prices/sync-history/all 먼저 호출하세요."
+                ),
             )
         base_date = latest
     else:
@@ -184,9 +192,7 @@ async def sync_run_db_inference(
 
     # 2) tickers 결정: 미지정 시 active 50종목 (^VIX/^IXIC 제외)
     if payload.tickers is None:
-        rows = await session.execute(
-            select(Ticker.ticker).where(Ticker.is_active.is_(True))
-        )
+        rows = await session.execute(select(Ticker.ticker).where(Ticker.is_active.is_(True)))
         all_active = [r[0] for r in rows.all()]
         tickers = [t for t in all_active if t not in MARKET_INDEX_TICKERS]
     else:
@@ -213,9 +219,7 @@ async def sync_run_db_inference(
         def __init__(self, d):
             self.ticker = d["ticker"]
             self.paths = d["paths"]
-            self.xai_features = [
-                _XaiAdapter(x) for x in (d.get("xai_features") or [])
-            ] or None
+            self.xai_features = [_XaiAdapter(x) for x in (d.get("xai_features") or [])] or None
 
     class _XaiAdapter:
         def __init__(self, d):
@@ -257,6 +261,7 @@ async def sync_run_db_inference(
 @router.post(
     "/sync/predictions",
     response_model=ApiResponse[SyncPredictionsData],
+    dependencies=[Depends(require_operator)],
     summary="모델 추론 결과 JSON 일괄 적재 — 19 quantile 전체 + XAI 한 페이로드",
 )
 async def sync_predictions(
@@ -293,9 +298,8 @@ async def sync_predictions(
 @router.post(
     "/sync/run-inference",
     response_model=ApiResponse[RunInferenceData],
-    summary=(
-        "ZERi-ai-model 추론 스크립트 호출 → CSV 생성 → predictions/risk_grades 적재"
-    ),
+    dependencies=[Depends(require_operator)],
+    summary=("ZERi-ai-model 추론 스크립트 호출 → CSV 생성 → predictions/risk_grades 적재"),
 )
 async def sync_run_inference(
     payload: RunInferenceRequest,
@@ -422,7 +426,9 @@ async def get_predictions_history_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[PredictionHistoryData]:
     data = await risk_query_service.get_predictions_history(
-        session, ticker, limit=limit,
+        session,
+        ticker,
+        limit=limit,
     )
     return ApiResponse(data=data)
 

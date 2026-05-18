@@ -45,7 +45,7 @@
 | code | HTTP | 의미 |
 | :-- | :--: | :-- |
 | INVALID_PARAMETER | 400 | 잘못된 파라미터 (비밀번호 정책 위반 포함) |
-| UNAUTHORIZED | 401 | 인증 필요 / 토큰 위조 / refresh 재사용 감지 |
+| UNAUTHORIZED | 401 | 인증 필요 / 토큰 위조 / refresh 재사용 감지 / X-Operator-Key 불일치 |
 | TOKEN_EXPIRED | 401 | 토큰 만료 |
 | INVALID_CREDENTIALS | 401 | 이메일/비밀번호 불일치 (로그인) |
 | EMAIL_DUPLICATE | 409 | 이메일 중복 |
@@ -688,6 +688,46 @@ curl 'http://localhost:8000/v1/macro/CPIAUCSL?start=2025-01-01&end=2025-12-31'
 ## 2. [수집] 운영자/cron 전용
 
 일반 클라이언트가 호출하지 않음. 일일 스케줄러(cron, GitHub Actions, Cloud Scheduler) 또는 운영자 수동 호출용. 외부 API(yfinance, FRED) → 우리 DB로 데이터 적재가 본질적 역할.
+
+### 🔒 운영자 인증 — 본 섹션 모든 엔드포인트 공통
+
+본 섹션의 모든 `POST /v1/*/sync*`, `POST /v1/*/sync-history/*`, `POST /v1/risk/sync/*`는 **운영자 API key 보호**됨. 사용자 JWT와는 **별개 시크릿**.
+
+요청에 다음 헤더 필수:
+
+```
+X-Operator-Key: <OPERATOR_API_KEY>
+```
+
+응답:
+
+| 상황 | HTTP | code |
+| :-- | :--: | :-- |
+| 헤더 누락 | 401 | UNAUTHORIZED |
+| 키 불일치 | 401 | UNAUTHORIZED |
+| 서버에 키 미설정 | 500 | INTERNAL_ERROR |
+
+curl 예시 (모든 sync 호출에 동일하게 적용):
+
+```bash
+curl -X POST 'http://localhost:8000/v1/risk/sync/run-tft-m3' \
+  -H "X-Operator-Key: $OPERATOR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+GitHub Actions cron 예시 (개념):
+
+```yaml
+- name: 일일 모델 추론
+  run: |
+    curl -X POST "${{ secrets.API_BASE_URL }}/v1/risk/sync/run-tft-m3" \
+      -H "X-Operator-Key: ${{ secrets.OPERATOR_API_KEY }}" \
+      -H "Content-Type: application/json" \
+      -d '{}'
+```
+
+> 운영 환경에서는 `OPERATOR_API_KEY`가 빈 값/짧은 값/JWT_SECRET과 동일하면 **부팅 거부** (`app/core/config.py` 검증).
 
 
 ### POST /v1/tickers/sync/{target}
