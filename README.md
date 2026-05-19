@@ -23,6 +23,7 @@
 - ✅ macro — FRED 13개 시리즈 적재 + 시계열 조회
 - ✅ auth — signup/login/refresh/logout, JWT (HS256), refresh rotation + family invalidation, rate limit, password policy
 - ✅ /me — GET/PATCH/DELETE, 하이브리드 soft-delete, 비밀번호 변경 시 refresh 일괄 revoke, disclaimer 재동의, **마케팅 수신 동의 (정보통신망법 §50)** event-sourced
+- ✅ /me/devices — FCM 푸시 토큰 등록/조회/제거, 멱등 UPSERT + 토큰 transfer 자동 처리 (web/ios/android 단일 인프라)
 - ✅ /me/watchlist — GET / POST / DELETE, 안전 상한 100, 중복·비활성 차단, 멱등 삭제, rate limit
 - ✅ risk — spotlight / verdict / path / attention 4개 GET + sync 5개 POST. **서버 내장 TFT m3 추론** (`/sync/run-tft-m3`) → predictions / risk_grades / xai_explanations 자동 적재. XAI 자연어 설명 + summary_narrative 응답 포함.
 - ✅ /me/history — list / stats / detail 3개 GET. `record=true` 시 verdict 조회 스냅샷을 analysis_history 에 INSERT.

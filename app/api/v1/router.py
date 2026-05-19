@@ -12,7 +12,15 @@ Convention (matches the spec §8 screen-to-API matrix):
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-    auth, history, macro, me, prices, risk, tickers, watchlist,
+    auth,
+    devices,
+    history,
+    macro,
+    me,
+    prices,
+    risk,
+    tickers,
+    watchlist,
 )
 
 api_router = APIRouter(prefix="/v1")
@@ -22,6 +30,7 @@ api_router.include_router(me.router, prefix="/me", tags=["me"])
 # /me 하위 리소스 — me 라우터 다음에 등록.
 api_router.include_router(watchlist.router, prefix="/me/watchlist", tags=["me"])
 api_router.include_router(history.router, prefix="/me/history", tags=["me"])
+api_router.include_router(devices.router, prefix="/me/devices", tags=["me"])
 api_router.include_router(prices.router, prefix="/prices", tags=["prices"])
 api_router.include_router(tickers.router, prefix="/tickers", tags=["tickers"])
 api_router.include_router(macro.router, prefix="/macro", tags=["macro"])
