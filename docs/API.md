@@ -895,6 +895,104 @@ curl -X POST "$API_BASE/v1/notifications/send" \
 ```
 
 
+### POST /v1/notifications/run-watchlist-trigger (운영자 / cron)
+
+워치리스트 종목들의 grade 변화를 감지해 푸시 알림을 자동 발송. **daily-batch cron 의 마지막 step 이 호출**.
+
+Auth: **`X-Operator-Key` 헤더**.
+
+동작:
+
+1. 활성 사용자 전체 순회 (`deleted_at IS NULL`)
+2. 각 사용자의 워치리스트 종목별로 `predictions` 테이블의 최근 2 개 base_date 비교
+3. grade 변화 (LOW/MEDIUM/HIGH 단계 변화) 감지된 종목만 발송 큐에 push
+4. 사용자별 알림 발송 — 5건 이하면 종목당 1건, 6건 이상이면 묶음 메시지 1건
+5. 마케팅 동의 (PUSH OPTED_IN) 안 한 사용자는 발송 안 됨, skipped_reason=`NOT_OPTED_IN`
+
+Grade 분류 (B 담당자 `risk_ingest_service.derive_grade` 를 그대로 재사용):
+
+| Grade | 조건 (worst_case_pct) |
+|---|---|
+| VOLATILITY_HIGH | ≤ -0.08 (8% 이상 손실 가능) |
+| VOLATILITY_MID | -0.08 < x ≤ -0.05 |
+| VOLATILITY_LOW | > -0.05 |
+
+임계값은 모델 분포 분석에 따라 `risk_ingest_service.py` 의 `_HIGH_THRESHOLD` / `_MID_THRESHOLD` 에서 조정.
+
+Request:
+
+```json
+{
+  "base_url": "https://jusikcool.duckdns.org"
+}
+```
+
+`base_url` 미지정 시 default 사용 (알림 link 의 도메인).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "users_processed": 47,
+    "users_with_changes": 3,
+    "notifications_sent": 5,
+    "notifications_failed": 0,
+    "users": [
+      {
+        "user_id": 7,
+        "detected_changes": 2,
+        "sent": 2,
+        "skipped_reason": null,
+        "changes": [
+          {
+            "ticker": "AAPL",
+            "from_grade": "VOLATILITY_LOW",
+            "to_grade": "VOLATILITY_HIGH",
+            "worst_case_pct": -0.142
+          },
+          {
+            "ticker": "NVDA",
+            "from_grade": "VOLATILITY_MID",
+            "to_grade": "VOLATILITY_HIGH",
+            "worst_case_pct": -0.181
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+알림 내용 (종목당 1건 발송 케이스):
+
+```
+title: "위험 등급 변화 — AAPL"
+body:  "VOLATILITY_LOW → VOLATILITY_HIGH (최악 -14.2%). 자세히 보기"
+data:  {"type": "RISK_ALERT", "ticker": "AAPL",
+        "from_grade": "VOLATILITY_LOW", "to_grade": "VOLATILITY_HIGH"}
+link:  "{base_url}/risk/AAPL"
+```
+
+5건 초과 시 묶음:
+
+```
+title: "위험 등급 변화 6개 종목"
+body:  "HIGH 등급 3개 포함. 워치리스트 확인하세요."
+data:  {"type": "RISK_ALERT_SUMMARY", "change_count": "6"}
+link:  "{base_url}/watchlist"
+```
+
+curl 예시 (cron 에서):
+
+```bash
+curl -X POST "$API_BASE/v1/notifications/run-watchlist-trigger" \
+  -H "X-Operator-Key: $OPERATOR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+
 ## 1. [프런트] 사용자 화면용
 
 우리 DB만 조회. 외부 API 호출 없음. 응답 시간 일정.

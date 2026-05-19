@@ -31,6 +31,14 @@ on:
         options:
           - 'false'
           - 'true'
+      skip_trigger:
+        description: '알림 발송 step 건너뛰기 (FCM 시크릿 미설정 시)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 # 동시 실행 방지 — 이전 run 이 진행 중이면 자동 취소.
 concurrency:
@@ -111,6 +119,29 @@ jobs:
           n_tickers=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('n_tickers_with_data', 'unknown'))")
           n_preds=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('predictions_upserted', 'unknown'))")
           echo "✓ Inference complete — tickers=$n_tickers, predictions=$n_preds"
+
+      # ─── Step 4: 워치리스트 grade 변화 감지 + 푸시 알림 발송 ───────────
+      # 추론 step 이 끝나야 의미 있음 (predictions 가 최신이어야 변화 감지).
+      # FCM 시크릿이 서버에 없으면 발송 자체는 INTERNAL_ERROR — workflow 는 fail.
+      # FCM 셋업 완료 전까지는 workflow_dispatch 의 skip_trigger=true 로 우회.
+      - name: Trigger watchlist grade-change notifications
+        id: trigger
+        if: ${{ inputs.skip_inference != 'true' && inputs.skip_trigger != 'true' }}
+        timeout-minutes: 5
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/notifications/run-watchlist-trigger"
+          response=$(curl -fsS --max-time 240 -X POST \
+            "$API_BASE/v1/notifications/run-watchlist-trigger" \
+            -H "X-Operator-Key: $OP_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "$response" | tee /tmp/trigger.json
+          users=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('users_processed', 'unknown'))")
+          with_changes=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('users_with_changes', 'unknown'))")
+          sent=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('notifications_sent', 'unknown'))")
+          failed=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('notifications_failed', 'unknown'))")
+          echo "✓ Trigger complete — users=$users, with_changes=$with_changes, sent=$sent, failed=$failed"
 
       # 실패해도 직전 응답 파일들 업로드 — 디버깅용
       - name: Upload response logs
