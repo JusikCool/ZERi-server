@@ -89,6 +89,8 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 | POST /v1/me/disclaimer-ack | 30/분 | 매 호출 INSERT — DB 행 누적 차단 |
 | POST /v1/me/marketing-consent | 30/분 | 동의 INSERT — DB 행 누적 차단 |
 | DELETE /v1/me/marketing-consent | 30/분 | 철회 INSERT — DB 행 누적 차단 |
+| POST /v1/me/devices | 60/분 | 앱 부팅 토큰 등록 (멱등) |
+| DELETE /v1/me/devices/{device_id} | 30/분 | 명시적 디바이스 제거 |
 | POST /v1/me/watchlist | 60/분 | 등록 폭주 방지 |
 | DELETE /v1/me/watchlist/{ticker} | 60/분 | 삭제 폭주 방지 |
 
@@ -634,6 +636,146 @@ curl 예시:
 
 ```bash
 curl -X DELETE 'http://localhost:8000/v1/me/marketing-consent?channel=EMAIL' \
+  -H "Authorization: Bearer $ACCESS"
+```
+
+
+### GET /v1/me/devices
+
+내 활성 디바이스 목록. `revoked_at IS NULL` 만, last_seen_at 내림차순.
+
+Auth: 필수.
+
+⚠️ `token` 자체는 응답에 포함되지 않음 (보안 — FCM 토큰 노출 금지). 식별은 `device_id` 로.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "count": 2,
+    "items": [
+      {
+        "device_id": 12,
+        "platform": "web",
+        "user_agent": "Mozilla/5.0 (Macintosh; ...) Chrome/...",
+        "locale": "ko",
+        "registered_at": "2026-05-19T05:30:00Z",
+        "last_seen_at": "2026-05-19T07:12:00Z"
+      },
+      {
+        "device_id": 9,
+        "platform": "ios",
+        "user_agent": "iPhone15,3 iOS 17.4",
+        "locale": "ko",
+        "registered_at": "2026-05-15T10:00:00Z",
+        "last_seen_at": "2026-05-19T06:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+
+### POST /v1/me/devices
+
+FCM 푸시 토큰 등록/갱신. **멱등** — 앱 부팅마다 호출해도 됨.
+
+Auth: 필수. Rate limit: **60/분 per IP** (앱 부팅 시 호출되는 빈도 고려).
+
+처리 시나리오:
+
+| 상황 | 동작 | `is_new` |
+|---|---|---|
+| 새 토큰 (DB 에 없음) | INSERT | `true` |
+| 본인 토큰 (DB 에 같은 user_id) | last_seen_at + user_agent + locale 갱신 | `false` |
+| 다른 user 의 토큰 (같은 디바이스가 다른 계정으로 로그인) | 옛 행 삭제 + 본인 INSERT (transfer) | `true` |
+
+Request:
+
+```json
+{
+  "token": "fGq...FCM_token_400자_내외",
+  "platform": "web",
+  "user_agent": "Mozilla/5.0 ...",
+  "locale": "ko"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `token` | string | ✅ | FCM Web/iOS/Android 토큰. 10~512자 |
+| `platform` | `web` \| `ios` \| `android` | ✅ | 발송 채널 식별 |
+| `user_agent` | string | | 디버깅/사용자 식별용 |
+| `locale` | string | | ISO 639-1 (`ko`, `en` 등) — 향후 다국어 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "device_id": 12,
+    "platform": "web",
+    "is_new": true,
+    "last_seen_at": "2026-05-19T07:12:00Z"
+  }
+}
+```
+
+⚠️ **마케팅 수신 동의** (`POST /v1/me/marketing-consent`) 가 OPTED_IN 이어야 실제 푸시 발송. 토큰 등록만으로는 알림 안 보냄. 정보통신망법 §50 준수.
+
+
+### DELETE /v1/me/devices/{device_id}
+
+특정 디바이스 hard-delete. "이 기기에서 알림 끄기" / 사용자 로그아웃 시 클라이언트가 호출.
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+본인 디바이스가 아닌 `device_id` 를 넘기면 400 (보안 — 다른 user 데이터 존재 여부 leak 방지).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "deleted": true,
+    "device_id": 12
+  }
+}
+```
+
+Response 400:
+
+```json
+{
+  "error": {
+    "code": "INVALID_PARAMETER",
+    "message": "해당 디바이스를 찾을 수 없습니다.",
+    "details": {"device_id": 12}
+  }
+}
+```
+
+curl 예시 (PWA Service Worker 에서 FCM 토큰 받은 후):
+
+```bash
+# 토큰 등록 (앱 부팅마다)
+curl -X POST 'http://localhost:8000/v1/me/devices' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "fGq...",
+    "platform": "web",
+    "user_agent": "Mozilla/5.0 ...",
+    "locale": "ko"
+  }'
+
+# 내 디바이스 목록
+curl 'http://localhost:8000/v1/me/devices' \
+  -H "Authorization: Bearer $ACCESS"
+
+# 특정 디바이스 끄기
+curl -X DELETE 'http://localhost:8000/v1/me/devices/12' \
   -H "Authorization: Bearer $ACCESS"
 ```
 

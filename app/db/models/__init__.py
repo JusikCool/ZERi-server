@@ -5,6 +5,7 @@ which is what Alembic's autogenerate uses as the source of truth.
 from app.db.base import Base
 from app.db.models.analysis_history import AnalysisHistory
 from app.db.models.backtest_result import BacktestResult
+from app.db.models.device_token import DeviceToken
 from app.db.models.disclaimer_ack import DisclaimerAck
 from app.db.models.macro_indicator import MacroIndicator
 from app.db.models.marketing_consent import MarketingConsent
@@ -34,4 +35,5 @@ __all__ = [
     "BacktestResult",
     "RefreshToken",
     "MarketingConsent",
+    "DeviceToken",
 ]
