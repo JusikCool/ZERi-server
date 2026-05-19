@@ -239,3 +239,4 @@ __marimo__/
 
 # Claude Code 작업 디렉토리
 /.claude/
+firebase-key.json

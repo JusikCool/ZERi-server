@@ -19,6 +19,7 @@ dependencies = [
     "pandas>=2.2",
     "httpx>=0.27",
     "slowapi>=0.1.9",
+    "firebase-admin>=6.5",
 ]
 
 # 모델 추론(POST /v1/risk/sync/run-inference) 만 사용. 메인 서버는 torch 없이도 부팅.

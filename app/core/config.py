@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     # GitHub Actions cron이 secrets.OPERATOR_API_KEY로 헤더에 주입한다.
     operator_api_key: str = ""
 
+    # Firebase Cloud Messaging — 웹/iOS/Android 푸시 발송.
+    # 둘 중 하나로 서비스 계정 키 주입:
+    #   FIREBASE_SERVICE_ACCOUNT_JSON: JSON 통째 (한 줄로 escape 된 형태)
+    #   FIREBASE_SERVICE_ACCOUNT_PATH: 파일 경로 (gitignored)
+    # 둘 다 비어있으면 FCM 초기화 안 함 → 발송 호출 시 503 INTERNAL_ERROR.
+    firebase_project_id: str = ""
+    firebase_service_account_json: str = ""
+    firebase_service_account_path: str = ""
+    # 발송 HTTP timeout (초). FCM 응답이 느릴 때 한 사용자가 다른 요청을 막지 않도록 짧게.
+    fcm_send_timeout_sec: int = 10
+
     # ZERi-ai-model 폴더 경로 (predict_kronos.py / predict_with_xai.py 위치).
     # 미설정 시 ../ZERi-ai-model 로 자동 추정.
     zeri_ai_model_path: str = ""
@@ -72,6 +83,13 @@ class Settings(BaseSettings):
     @property
     def is_test(self) -> bool:
         return self.env.lower() in _TEST_ENV_TOKENS
+
+    @property
+    def is_fcm_configured(self) -> bool:
+        """FCM 어댑터가 부팅 가능한 상태인가."""
+        return bool(
+            self.firebase_service_account_json.strip() or self.firebase_service_account_path.strip()
+        )
 
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> "Settings":
