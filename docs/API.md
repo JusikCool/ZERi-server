@@ -91,6 +91,7 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 | DELETE /v1/me/marketing-consent | 30/분 | 철회 INSERT — DB 행 누적 차단 |
 | POST /v1/me/devices | 60/분 | 앱 부팅 토큰 등록 (멱등) |
 | DELETE /v1/me/devices/{device_id} | 30/분 | 명시적 디바이스 제거 |
+| POST /v1/me/notifications/test | 10/시간 | 본인 디바이스 테스트 알림 (FCM 호출) |
 | POST /v1/me/watchlist | 60/분 | 등록 폭주 방지 |
 | DELETE /v1/me/watchlist/{ticker} | 60/분 | 삭제 폭주 방지 |
 
@@ -777,6 +778,120 @@ curl 'http://localhost:8000/v1/me/devices' \
 # 특정 디바이스 끄기
 curl -X DELETE 'http://localhost:8000/v1/me/devices/12' \
   -H "Authorization: Bearer $ACCESS"
+```
+
+
+### POST /v1/me/notifications/test
+
+본인의 활성 디바이스에 **테스트 알림** 발송. UX 검증용 — "알림 잘 가는지 한 번 보내보자" 버튼.
+
+Auth: 필수. Rate limit: **10/시간** (테스트 의도, FCM 호출 비용 제한).
+
+⚠️ **마케팅 동의 검증 안 함** — 본인 의도적 테스트라 정보통신망법 §50 범위 밖.
+
+Request:
+
+```json
+{
+  "title": "Before 테스트",
+  "body": "알림이 정상 동작합니다.",
+  "link": "https://app.before.com/dashboard"
+}
+```
+
+모든 필드 optional — 미지정 시 기본값.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "requested": 2,
+    "succeeded": 2,
+    "failed": 0,
+    "items": [
+      { "device_id": 12, "success": true, "message_id": "projects/.../messages/123", "error_code": null },
+      { "device_id": 9,  "success": true, "message_id": "projects/.../messages/124", "error_code": null }
+    ]
+  }
+}
+```
+
+활성 디바이스가 0 이면 `requested: 0, items: []` (에러 X).
+
+FCM 이 `UNREGISTERED` / `INVALID_ARGUMENT` 등을 반환하면 해당 device 가 자동으로 revoke 됨 (`revoked_at` 채워짐) → 다음 발송에서 제외.
+
+
+### POST /v1/notifications/send (운영자 전용)
+
+특정 사용자에게 푸시 발송. **운영자 / cron 트리거 엔진 (PR-N6) 이 호출**. 사용자가 직접 호출하지 않음.
+
+Auth: **`X-Operator-Key` 헤더** (사용자 JWT 가 아님).
+
+Request:
+
+```json
+{
+  "user_id": 7,
+  "title": "AAPL 하방 위험 ↑",
+  "body": "1주일 내 최악 -14% 가능. 자세히 보기",
+  "data": {
+    "ticker": "AAPL",
+    "type": "RISK_ALERT"
+  },
+  "link": "https://app.before.com/risk/AAPL",
+  "require_consent": true
+}
+```
+
+| 필드 | 필수 | 설명 |
+| :-- | :--: | :-- |
+| `user_id` | ✅ | 발송 대상 사용자 |
+| `title`, `body` | ✅ | 알림 내용 |
+| `data` | | FCM data payload (JS 측에서 `onMessage` 핸들러로 수신) |
+| `link` | | 알림 클릭 시 열 URL |
+| `require_consent` | (default true) | 마케팅 동의 검증 (정보통신망법 §50). `false` 면 긴급 공지 패턴 — 동의 무시하고 발송 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "user_id": 7,
+    "skipped_reason": null,
+    "requested": 2,
+    "succeeded": 2,
+    "failed": 0,
+    "items": [
+      { "device_id": 12, "success": true, "message_id": "..." }
+    ]
+  }
+}
+```
+
+`skipped_reason` 값:
+
+| 값 | 의미 |
+|---|---|
+| `null` | 정상 발송 |
+| `"NOT_OPTED_IN"` | 마케팅 동의(PUSH) 없음 — `require_consent=true` 일 때 |
+| `"NO_ACTIVE_DEVICES"` | 동의는 했는데 등록 디바이스 없음 |
+
+skip 된 경우에도 200 — 호출 측이 정상 흐름으로 다룰 수 있게.
+
+curl 예시 (cron 에서):
+
+```bash
+curl -X POST "$API_BASE/v1/notifications/send" \
+  -H "X-Operator-Key: $OPERATOR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 7,
+    "title": "AAPL 하방 위험 ↑",
+    "body": "1주일 내 최악 -14%",
+    "data": {"ticker":"AAPL","type":"RISK_ALERT"},
+    "link": "https://app.before.com/risk/AAPL"
+  }'
 ```
 
 
