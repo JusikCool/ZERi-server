@@ -5,6 +5,7 @@ from app.services import (
     marketing_consent_service,
     me_service,
     notification_service,
+    notification_trigger_service,
     watchlist_service,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "marketing_consent_service",
     "me_service",
     "notification_service",
+    "notification_trigger_service",
     "watchlist_service",
 ]

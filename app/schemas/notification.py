@@ -10,6 +10,10 @@ __all__ = [
     "SendPushRequest",
     "SendPushData",
     "SendResultItem",
+    "RunTriggerRequest",
+    "RunTriggerData",
+    "TriggerUserSummary",
+    "TriggerChangeItem",
 ]
 
 
@@ -71,3 +75,45 @@ class SendPushData(BaseModel):
     succeeded: int
     failed: int
     items: list[SendResultItem]
+
+
+# ---- 워치리스트 grade 변화 트리거 (cron) ---------------------------------
+
+
+class RunTriggerRequest(BaseModel):
+    """daily-batch cron 이 호출하는 트리거 엔진 시작 — body 거의 비어있음."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # 알림 link 의 base URL — 환경별로 다름 (운영: HTTPS 도메인).
+    # 미지정 시 서버 default ("https://jusikcool.duckdns.org").
+    base_url: str | None = Field(default=None, max_length=255)
+
+
+class TriggerChangeItem(BaseModel):
+    """한 종목의 grade 변화."""
+
+    ticker: str
+    from_grade: str
+    to_grade: str
+    worst_case_pct: float | None = None
+
+
+class TriggerUserSummary(BaseModel):
+    """한 사용자의 트리거 처리 결과."""
+
+    user_id: int
+    detected_changes: int
+    sent: int
+    skipped_reason: str | None = None  # NOT_OPTED_IN / NO_ACTIVE_DEVICES / null
+    changes: list[TriggerChangeItem]
+
+
+class RunTriggerData(BaseModel):
+    """cron 응답 — 운영자가 결과 모니터링."""
+
+    users_processed: int
+    users_with_changes: int
+    notifications_sent: int
+    notifications_failed: int
+    users: list[TriggerUserSummary]
