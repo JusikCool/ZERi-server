@@ -87,6 +87,8 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 | PATCH /v1/me | 20/분 | argon2 검증 비용 + 폭주 방어 |
 | DELETE /v1/me | 5/시간 | 탈퇴 의도 외 자동화 폭주 방지 |
 | POST /v1/me/disclaimer-ack | 30/분 | 매 호출 INSERT — DB 행 누적 차단 |
+| POST /v1/me/marketing-consent | 30/분 | 동의 INSERT — DB 행 누적 차단 |
+| DELETE /v1/me/marketing-consent | 30/분 | 철회 INSERT — DB 행 누적 차단 |
 | POST /v1/me/watchlist | 60/분 | 등록 폭주 방지 |
 | DELETE /v1/me/watchlist/{ticker} | 60/분 | 삭제 폭주 방지 |
 
@@ -507,6 +509,133 @@ Response 200:
 ```
 
 매 호출마다 `disclaimer_acks`에 새 행 INSERT — 시점별 증빙 보존.
+
+
+### GET /v1/me/marketing-consent
+
+채널별 마케팅 수신 동의 현재 상태 조회. **정보통신망법 §50 영리목적 광고성 정보 수신 동의** 의 현재 상태.
+
+Auth: 필수.
+
+응답은 가장 최근 행 기준 — 같은 채널에 OPTED_IN/OUT 이력이 여러 번이어도 마지막 상태만.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "channel": "EMAIL",
+        "action": "OPTED_IN",
+        "night_time_opt_in": false,
+        "version": "V1",
+        "recorded_at": "2026-05-19T05:30:00Z"
+      },
+      {
+        "channel": "PUSH",
+        "action": "OPTED_OUT",
+        "night_time_opt_in": false,
+        "version": "V1",
+        "recorded_at": "2026-05-20T12:10:00Z"
+      }
+    ]
+  }
+}
+```
+
+- 행이 한 번도 없으면 `items: []`
+- channel 은 알파벳 순 정렬 — 안정적 응답
+- 발송 직전 백엔드가 가장 최근 행으로 opted-in 여부 판단
+
+
+### POST /v1/me/marketing-consent
+
+마케팅 수신 동의 INSERT. **정보통신망법 §50 증빙용** — 모든 동의/철회를 새 행으로 보존 (event-sourced).
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+⚠️ **자본시장법 §69 면책 동의(`/me/disclaimer-ack`)와 별개**입니다. signup 시점에 자동 INSERT 되지 않음. 별도 화면/모달에서 명시적으로 호출.
+
+Request:
+
+```json
+{
+  "channel": "EMAIL",
+  "night_time_opt_in": false,
+  "version": "V1"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `channel` | `EMAIL` \| `PUSH` | ✅ | 동의할 채널. 향후 채널 추가 시 enum 확장 |
+| `night_time_opt_in` | bool | (default false) | 야간(21~08시) 발송 별도 동의 — 정보통신망법 §50-3 |
+| `version` | string | (default "V1") | 약관 버전. 약관 갱신 시 재동의 트래킹용 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "consent_id": 12,
+    "channel": "EMAIL",
+    "action": "OPTED_IN",
+    "night_time_opt_in": false,
+    "recorded_at": "2026-05-19T05:30:00Z"
+  }
+}
+```
+
+curl 예시:
+
+```bash
+# EMAIL 일반 동의
+curl -X POST 'http://localhost:8000/v1/me/marketing-consent' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"EMAIL"}'
+
+# PUSH 동의 + 야간 발송 허용
+curl -X POST 'http://localhost:8000/v1/me/marketing-consent' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"PUSH","night_time_opt_in":true}'
+```
+
+
+### DELETE /v1/me/marketing-consent
+
+마케팅 수신 거부 INSERT. **삭제가 아니라 OPTED_OUT 행 추가** — 발송 이력 보존 3년 (정보통신망법) 요건 충족.
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+Query:
+
+| 이름 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `channel` | `EMAIL` \| `PUSH` | ✅ | 철회할 채널 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "consent_id": 18,
+    "channel": "EMAIL",
+    "recorded_at": "2026-05-20T12:10:00Z"
+  }
+}
+```
+
+여러 채널을 한 번에 철회하려면 채널마다 호출 (간단한 API 유지).
+
+curl 예시:
+
+```bash
+curl -X DELETE 'http://localhost:8000/v1/me/marketing-consent?channel=EMAIL' \
+  -H "Authorization: Bearer $ACCESS"
+```
 
 
 ## 1. [프런트] 사용자 화면용
