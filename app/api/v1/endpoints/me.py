@@ -1,4 +1,4 @@
-"""GET/PATCH/DELETE /v1/me, POST /v1/me/disclaimer-ack
+"""GET/PATCH/DELETE /v1/me, POST /v1/me/disclaimer-ack, /v1/me/marketing-consent (CRUD)
 
 전부 인증 필수 (get_current_user 의존성).
 엔드포인트는 얇게 — 입력 파싱 + service 호출 + envelope 래핑.
@@ -8,17 +8,26 @@ Rate limit 정책:
 - PATCH: 20/분 (argon2 비번 검증 비용 + 폭주 방어)
 - DELETE: 5/시간 (탈퇴 의도 외 자동화 도구 폭주 방어, 실수 방지)
 - disclaimer-ack: 30/분 (매 호출마다 INSERT — 무한 호출 시 DB 행 누적 차단)
+- marketing-consent POST/DELETE: 30/분 (각 INSERT — 폭주 방어)
+- marketing-consent GET: 적용 안 함 (사용자 본인 데이터 조회)
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.rate_limit import limiter
 from app.db.models import User
 from app.schemas.common import ApiResponse
+from app.schemas.marketing import (
+    ConsentRecordedData,
+    ConsentRequest,
+    ConsentStatusData,
+    MarketingChannel,
+    OptOutData,
+)
 from app.schemas.me import (
     DeleteMeData,
     DisclaimerAckData,
@@ -27,7 +36,7 @@ from app.schemas.me import (
     UpdateMeData,
     UpdateMeRequest,
 )
-from app.services import me_service
+from app.services import marketing_consent_service, me_service
 
 router = APIRouter()
 
@@ -97,4 +106,59 @@ async def ack_disclaimer(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DisclaimerAckData]:
     data = await me_service.ack_disclaimer(session, user, payload, ip_address=_client_ip(request))
+    return ApiResponse(data=data)
+
+
+# ---- marketing consent (정보통신망법 §50) ------------------------------
+
+
+@router.get(
+    "/marketing-consent",
+    response_model=ApiResponse[ConsentStatusData],
+    summary="채널별 마케팅 수신 동의 현재 상태 (event-sourced)",
+)
+async def get_marketing_consent(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ConsentStatusData]:
+    data = await marketing_consent_service.get_current_status(session, user)
+    return ApiResponse(data=data)
+
+
+@router.post(
+    "/marketing-consent",
+    response_model=ApiResponse[ConsentRecordedData],
+    summary="마케팅 수신 동의 INSERT (정보통신망법 §50 증빙)",
+)
+@limiter.limit("30/minute")
+async def record_marketing_consent(
+    payload: ConsentRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ConsentRecordedData]:
+    data = await marketing_consent_service.record_consent(
+        session, user, payload, ip_address=_client_ip(request)
+    )
+    return ApiResponse(data=data)
+
+
+@router.delete(
+    "/marketing-consent",
+    response_model=ApiResponse[OptOutData],
+    summary="마케팅 수신 거부 INSERT (이력 보존)",
+)
+@limiter.limit("30/minute")
+async def opt_out_marketing(
+    request: Request,
+    channel: MarketingChannel = Query(
+        ...,
+        description="EMAIL | PUSH. 철회할 채널.",
+    ),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[OptOutData]:
+    data = await marketing_consent_service.record_opt_out(
+        session, user, channel, ip_address=_client_ip(request)
+    )
     return ApiResponse(data=data)

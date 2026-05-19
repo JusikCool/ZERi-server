@@ -87,6 +87,11 @@ JWT Bearer. access(1h) + refresh(14d) 페어. **refresh는 회전(rotation) + �
 | PATCH /v1/me | 20/분 | argon2 검증 비용 + 폭주 방어 |
 | DELETE /v1/me | 5/시간 | 탈퇴 의도 외 자동화 폭주 방지 |
 | POST /v1/me/disclaimer-ack | 30/분 | 매 호출 INSERT — DB 행 누적 차단 |
+| POST /v1/me/marketing-consent | 30/분 | 동의 INSERT — DB 행 누적 차단 |
+| DELETE /v1/me/marketing-consent | 30/분 | 철회 INSERT — DB 행 누적 차단 |
+| POST /v1/me/devices | 60/분 | 앱 부팅 토큰 등록 (멱등) |
+| DELETE /v1/me/devices/{device_id} | 30/분 | 명시적 디바이스 제거 |
+| POST /v1/me/notifications/test | 10/시간 | 본인 디바이스 테스트 알림 (FCM 호출) |
 | POST /v1/me/watchlist | 60/분 | 등록 폭주 방지 |
 | DELETE /v1/me/watchlist/{ticker} | 60/분 | 삭제 폭주 방지 |
 
@@ -507,6 +512,485 @@ Response 200:
 ```
 
 매 호출마다 `disclaimer_acks`에 새 행 INSERT — 시점별 증빙 보존.
+
+
+### GET /v1/me/marketing-consent
+
+채널별 마케팅 수신 동의 현재 상태 조회. **정보통신망법 §50 영리목적 광고성 정보 수신 동의** 의 현재 상태.
+
+Auth: 필수.
+
+응답은 가장 최근 행 기준 — 같은 채널에 OPTED_IN/OUT 이력이 여러 번이어도 마지막 상태만.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "channel": "EMAIL",
+        "action": "OPTED_IN",
+        "night_time_opt_in": false,
+        "version": "V1",
+        "recorded_at": "2026-05-19T05:30:00Z"
+      },
+      {
+        "channel": "PUSH",
+        "action": "OPTED_OUT",
+        "night_time_opt_in": false,
+        "version": "V1",
+        "recorded_at": "2026-05-20T12:10:00Z"
+      }
+    ]
+  }
+}
+```
+
+- 행이 한 번도 없으면 `items: []`
+- channel 은 알파벳 순 정렬 — 안정적 응답
+- 발송 직전 백엔드가 가장 최근 행으로 opted-in 여부 판단
+
+
+### POST /v1/me/marketing-consent
+
+마케팅 수신 동의 INSERT. **정보통신망법 §50 증빙용** — 모든 동의/철회를 새 행으로 보존 (event-sourced).
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+⚠️ **자본시장법 §69 면책 동의(`/me/disclaimer-ack`)와 별개**입니다. signup 시점에 자동 INSERT 되지 않음. 별도 화면/모달에서 명시적으로 호출.
+
+Request:
+
+```json
+{
+  "channel": "EMAIL",
+  "night_time_opt_in": false,
+  "version": "V1"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `channel` | `EMAIL` \| `PUSH` | ✅ | 동의할 채널. 향후 채널 추가 시 enum 확장 |
+| `night_time_opt_in` | bool | (default false) | 야간(21~08시) 발송 별도 동의 — 정보통신망법 §50-3 |
+| `version` | string | (default "V1") | 약관 버전. 약관 갱신 시 재동의 트래킹용 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "consent_id": 12,
+    "channel": "EMAIL",
+    "action": "OPTED_IN",
+    "night_time_opt_in": false,
+    "recorded_at": "2026-05-19T05:30:00Z"
+  }
+}
+```
+
+curl 예시:
+
+```bash
+# EMAIL 일반 동의
+curl -X POST 'http://localhost:8000/v1/me/marketing-consent' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"EMAIL"}'
+
+# PUSH 동의 + 야간 발송 허용
+curl -X POST 'http://localhost:8000/v1/me/marketing-consent' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"PUSH","night_time_opt_in":true}'
+```
+
+
+### DELETE /v1/me/marketing-consent
+
+마케팅 수신 거부 INSERT. **삭제가 아니라 OPTED_OUT 행 추가** — 발송 이력 보존 3년 (정보통신망법) 요건 충족.
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+Query:
+
+| 이름 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `channel` | `EMAIL` \| `PUSH` | ✅ | 철회할 채널 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "consent_id": 18,
+    "channel": "EMAIL",
+    "recorded_at": "2026-05-20T12:10:00Z"
+  }
+}
+```
+
+여러 채널을 한 번에 철회하려면 채널마다 호출 (간단한 API 유지).
+
+curl 예시:
+
+```bash
+curl -X DELETE 'http://localhost:8000/v1/me/marketing-consent?channel=EMAIL' \
+  -H "Authorization: Bearer $ACCESS"
+```
+
+
+### GET /v1/me/devices
+
+내 활성 디바이스 목록. `revoked_at IS NULL` 만, last_seen_at 내림차순.
+
+Auth: 필수.
+
+⚠️ `token` 자체는 응답에 포함되지 않음 (보안 — FCM 토큰 노출 금지). 식별은 `device_id` 로.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "count": 2,
+    "items": [
+      {
+        "device_id": 12,
+        "platform": "web",
+        "user_agent": "Mozilla/5.0 (Macintosh; ...) Chrome/...",
+        "locale": "ko",
+        "registered_at": "2026-05-19T05:30:00Z",
+        "last_seen_at": "2026-05-19T07:12:00Z"
+      },
+      {
+        "device_id": 9,
+        "platform": "ios",
+        "user_agent": "iPhone15,3 iOS 17.4",
+        "locale": "ko",
+        "registered_at": "2026-05-15T10:00:00Z",
+        "last_seen_at": "2026-05-19T06:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+
+### POST /v1/me/devices
+
+FCM 푸시 토큰 등록/갱신. **멱등** — 앱 부팅마다 호출해도 됨.
+
+Auth: 필수. Rate limit: **60/분 per IP** (앱 부팅 시 호출되는 빈도 고려).
+
+처리 시나리오:
+
+| 상황 | 동작 | `is_new` |
+|---|---|---|
+| 새 토큰 (DB 에 없음) | INSERT | `true` |
+| 본인 토큰 (DB 에 같은 user_id) | last_seen_at + user_agent + locale 갱신 | `false` |
+| 다른 user 의 토큰 (같은 디바이스가 다른 계정으로 로그인) | 옛 행 삭제 + 본인 INSERT (transfer) | `true` |
+
+Request:
+
+```json
+{
+  "token": "fGq...FCM_token_400자_내외",
+  "platform": "web",
+  "user_agent": "Mozilla/5.0 ...",
+  "locale": "ko"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+| :-- | :-- | :--: | :-- |
+| `token` | string | ✅ | FCM Web/iOS/Android 토큰. 10~512자 |
+| `platform` | `web` \| `ios` \| `android` | ✅ | 발송 채널 식별 |
+| `user_agent` | string | | 디버깅/사용자 식별용 |
+| `locale` | string | | ISO 639-1 (`ko`, `en` 등) — 향후 다국어 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "device_id": 12,
+    "platform": "web",
+    "is_new": true,
+    "last_seen_at": "2026-05-19T07:12:00Z"
+  }
+}
+```
+
+⚠️ **마케팅 수신 동의** (`POST /v1/me/marketing-consent`) 가 OPTED_IN 이어야 실제 푸시 발송. 토큰 등록만으로는 알림 안 보냄. 정보통신망법 §50 준수.
+
+
+### DELETE /v1/me/devices/{device_id}
+
+특정 디바이스 hard-delete. "이 기기에서 알림 끄기" / 사용자 로그아웃 시 클라이언트가 호출.
+
+Auth: 필수. Rate limit: **30/분 per IP**.
+
+본인 디바이스가 아닌 `device_id` 를 넘기면 400 (보안 — 다른 user 데이터 존재 여부 leak 방지).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "deleted": true,
+    "device_id": 12
+  }
+}
+```
+
+Response 400:
+
+```json
+{
+  "error": {
+    "code": "INVALID_PARAMETER",
+    "message": "해당 디바이스를 찾을 수 없습니다.",
+    "details": {"device_id": 12}
+  }
+}
+```
+
+curl 예시 (PWA Service Worker 에서 FCM 토큰 받은 후):
+
+```bash
+# 토큰 등록 (앱 부팅마다)
+curl -X POST 'http://localhost:8000/v1/me/devices' \
+  -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "token": "fGq...",
+    "platform": "web",
+    "user_agent": "Mozilla/5.0 ...",
+    "locale": "ko"
+  }'
+
+# 내 디바이스 목록
+curl 'http://localhost:8000/v1/me/devices' \
+  -H "Authorization: Bearer $ACCESS"
+
+# 특정 디바이스 끄기
+curl -X DELETE 'http://localhost:8000/v1/me/devices/12' \
+  -H "Authorization: Bearer $ACCESS"
+```
+
+
+### POST /v1/me/notifications/test
+
+본인의 활성 디바이스에 **테스트 알림** 발송. UX 검증용 — "알림 잘 가는지 한 번 보내보자" 버튼.
+
+Auth: 필수. Rate limit: **10/시간** (테스트 의도, FCM 호출 비용 제한).
+
+⚠️ **마케팅 동의 검증 안 함** — 본인 의도적 테스트라 정보통신망법 §50 범위 밖.
+
+Request:
+
+```json
+{
+  "title": "Before 테스트",
+  "body": "알림이 정상 동작합니다.",
+  "link": "https://app.before.com/dashboard"
+}
+```
+
+모든 필드 optional — 미지정 시 기본값.
+
+Response 200:
+
+```json
+{
+  "data": {
+    "requested": 2,
+    "succeeded": 2,
+    "failed": 0,
+    "items": [
+      { "device_id": 12, "success": true, "message_id": "projects/.../messages/123", "error_code": null },
+      { "device_id": 9,  "success": true, "message_id": "projects/.../messages/124", "error_code": null }
+    ]
+  }
+}
+```
+
+활성 디바이스가 0 이면 `requested: 0, items: []` (에러 X).
+
+FCM 이 `UNREGISTERED` / `INVALID_ARGUMENT` 등을 반환하면 해당 device 가 자동으로 revoke 됨 (`revoked_at` 채워짐) → 다음 발송에서 제외.
+
+
+### POST /v1/notifications/send (운영자 전용)
+
+특정 사용자에게 푸시 발송. **운영자 / cron 트리거 엔진 (PR-N6) 이 호출**. 사용자가 직접 호출하지 않음.
+
+Auth: **`X-Operator-Key` 헤더** (사용자 JWT 가 아님).
+
+Request:
+
+```json
+{
+  "user_id": 7,
+  "title": "AAPL 하방 위험 ↑",
+  "body": "1주일 내 최악 -14% 가능. 자세히 보기",
+  "data": {
+    "ticker": "AAPL",
+    "type": "RISK_ALERT"
+  },
+  "link": "https://app.before.com/risk/AAPL",
+  "require_consent": true
+}
+```
+
+| 필드 | 필수 | 설명 |
+| :-- | :--: | :-- |
+| `user_id` | ✅ | 발송 대상 사용자 |
+| `title`, `body` | ✅ | 알림 내용 |
+| `data` | | FCM data payload (JS 측에서 `onMessage` 핸들러로 수신) |
+| `link` | | 알림 클릭 시 열 URL |
+| `require_consent` | (default true) | 마케팅 동의 검증 (정보통신망법 §50). `false` 면 긴급 공지 패턴 — 동의 무시하고 발송 |
+
+Response 200:
+
+```json
+{
+  "data": {
+    "user_id": 7,
+    "skipped_reason": null,
+    "requested": 2,
+    "succeeded": 2,
+    "failed": 0,
+    "items": [
+      { "device_id": 12, "success": true, "message_id": "..." }
+    ]
+  }
+}
+```
+
+`skipped_reason` 값:
+
+| 값 | 의미 |
+|---|---|
+| `null` | 정상 발송 |
+| `"NOT_OPTED_IN"` | 마케팅 동의(PUSH) 없음 — `require_consent=true` 일 때 |
+| `"NO_ACTIVE_DEVICES"` | 동의는 했는데 등록 디바이스 없음 |
+
+skip 된 경우에도 200 — 호출 측이 정상 흐름으로 다룰 수 있게.
+
+curl 예시 (cron 에서):
+
+```bash
+curl -X POST "$API_BASE/v1/notifications/send" \
+  -H "X-Operator-Key: $OPERATOR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": 7,
+    "title": "AAPL 하방 위험 ↑",
+    "body": "1주일 내 최악 -14%",
+    "data": {"ticker":"AAPL","type":"RISK_ALERT"},
+    "link": "https://app.before.com/risk/AAPL"
+  }'
+```
+
+
+### POST /v1/notifications/run-watchlist-trigger (운영자 / cron)
+
+워치리스트 종목들의 grade 변화를 감지해 푸시 알림을 자동 발송. **daily-batch cron 의 마지막 step 이 호출**.
+
+Auth: **`X-Operator-Key` 헤더**.
+
+동작:
+
+1. 활성 사용자 전체 순회 (`deleted_at IS NULL`)
+2. 각 사용자의 워치리스트 종목별로 `predictions` 테이블의 최근 2 개 base_date 비교
+3. grade 변화 (LOW/MEDIUM/HIGH 단계 변화) 감지된 종목만 발송 큐에 push
+4. 사용자별 알림 발송 — 5건 이하면 종목당 1건, 6건 이상이면 묶음 메시지 1건
+5. 마케팅 동의 (PUSH OPTED_IN) 안 한 사용자는 발송 안 됨, skipped_reason=`NOT_OPTED_IN`
+
+Grade 분류 (B 담당자 `risk_ingest_service.derive_grade` 를 그대로 재사용):
+
+| Grade | 조건 (worst_case_pct) |
+|---|---|
+| VOLATILITY_HIGH | ≤ -0.08 (8% 이상 손실 가능) |
+| VOLATILITY_MID | -0.08 < x ≤ -0.05 |
+| VOLATILITY_LOW | > -0.05 |
+
+임계값은 모델 분포 분석에 따라 `risk_ingest_service.py` 의 `_HIGH_THRESHOLD` / `_MID_THRESHOLD` 에서 조정.
+
+Request:
+
+```json
+{
+  "base_url": "https://jusikcool.duckdns.org"
+}
+```
+
+`base_url` 미지정 시 default 사용 (알림 link 의 도메인).
+
+Response 200:
+
+```json
+{
+  "data": {
+    "users_processed": 47,
+    "users_with_changes": 3,
+    "notifications_sent": 5,
+    "notifications_failed": 0,
+    "users": [
+      {
+        "user_id": 7,
+        "detected_changes": 2,
+        "sent": 2,
+        "skipped_reason": null,
+        "changes": [
+          {
+            "ticker": "AAPL",
+            "from_grade": "VOLATILITY_LOW",
+            "to_grade": "VOLATILITY_HIGH",
+            "worst_case_pct": -0.142
+          },
+          {
+            "ticker": "NVDA",
+            "from_grade": "VOLATILITY_MID",
+            "to_grade": "VOLATILITY_HIGH",
+            "worst_case_pct": -0.181
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+알림 내용 (종목당 1건 발송 케이스):
+
+```
+title: "위험 등급 변화 — AAPL"
+body:  "VOLATILITY_LOW → VOLATILITY_HIGH (최악 -14.2%). 자세히 보기"
+data:  {"type": "RISK_ALERT", "ticker": "AAPL",
+        "from_grade": "VOLATILITY_LOW", "to_grade": "VOLATILITY_HIGH"}
+link:  "{base_url}/risk/AAPL"
+```
+
+5건 초과 시 묶음:
+
+```
+title: "위험 등급 변화 6개 종목"
+body:  "HIGH 등급 3개 포함. 워치리스트 확인하세요."
+data:  {"type": "RISK_ALERT_SUMMARY", "change_count": "6"}
+link:  "{base_url}/watchlist"
+```
+
+curl 예시 (cron 에서):
+
+```bash
+curl -X POST "$API_BASE/v1/notifications/run-watchlist-trigger" \
+  -H "X-Operator-Key: $OPERATOR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
 
 
 ## 1. [프런트] 사용자 화면용
