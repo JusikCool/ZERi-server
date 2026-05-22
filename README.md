@@ -32,7 +32,7 @@
 - ✅ **operator API key 가드** — `/sync/*` 8개 라우트가 `X-Operator-Key` 헤더 검증 (PR #19). 운영자/cron 전용. cron 자동화 사전 단계.
 - ✅ **운영 안전성** — prod 환경에서 약한 시크릿 / `CORS=*` / `JWT==OPERATOR` 부팅 거부. compose에 `${VAR:?}` 강제. dev/운영 compose 분리.
 - ✅ **EC2 배포** — Ubuntu 26.04, Docker Compose, public 8000. 배포 검증 완료.
-- ⏳ **다음 단계** — **PR 2: GitHub Actions cron** (매일 새벽 자동 sync/inference). 그 외 부채: F-MODEL endpoints (`/v1/models/honesty`), 백테스트 계산 로직, T+30 outcome 평가 cron, Kronos 통합, HTTPS, AWS Secrets Manager 이전. 자세한 부채 목록은 [ISSUES.md](docs/ISSUES.md) 하단 참조.
+- ⏳ **다음 단계** — F-MODEL endpoints (`/v1/models/honesty`), 백테스트 계산 로직, T+30 outcome 평가 cron, Kronos 통합, HTTPS, AWS Secrets Manager 이전. 일일 sync/inference/알림 cron 은 `.github/workflows/daily-batch.yml` 로 연결 완료. 자세한 부채 목록은 [ISSUES.md](docs/ISSUES.md) 하단 참조.
 
 ## 스택
 
