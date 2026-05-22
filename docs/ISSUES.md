@@ -481,16 +481,24 @@ T+30 outcome 평가(이슈 #18)가 먼저 돌아야 백테스트가 의미를 �
 
 ---
 
-## 20. 매일 자동 cron 미구현 — 코드는 있는데 호출자가 없음
+## 20. 매일 자동 cron 연결 완료 — 운영상 잔여 리스크만 관리 단계
 
 **상황**
-`POST /v1/prices/sync-history`, `POST /v1/macro/sync/seed`, `POST /v1/risk/sync/run-tft-m3` 모두 잘 구현돼 있지만 — **이걸 매일 자동으로 호출해주는 스케줄러는 코드에 없음**. `app/main.py:25` lifespan hook 에는 refresh token sweep 만 있고, APScheduler/Celery beat 미도입.
+초기에는 `POST /v1/prices/sync-history`, `POST /v1/macro/sync/seed`, `POST /v1/risk/sync/run-tft-m3` 를 매일 자동으로 호출하는 외부 스케줄러가 없었지만, 현재는 **GitHub Actions workflow `.github/workflows/daily-batch.yml`** 이 가격 적재 → 거시지표 적재 → TFT 추론 → 워치리스트 변화 알림까지 순차 실행한다.
 
-**원인**
-스케줄러를 코드에 박으면 단일 인스턴스 가정에 묶임 (멀티 인스턴스에선 중복 실행). 외부 스케줄러(GitHub Actions, Cloud Scheduler)가 정석이지만 — **그 외부 cron 등록 자체가 미수행**.
+**현재 상태**
+- `schedule.cron = '30 21 * * *'` 로 KST 06:30 일일 실행
+- `workflow_dispatch` 로 수동 재실행 가능
+- `X-Operator-Key` 헤더를 사용해 운영자/cron 전용 엔드포인트만 호출
+- 마지막 Step 에서 `POST /v1/notifications/run-watchlist-trigger` 까지 연결되어 예측 갱신 직후 푸시 트리거 수행
 
-**해결 방향 (미구현, 부채 목록 등재)**
-GitHub Actions schedule 워크플로 한 개로 충분:
+**남은 운영 리스크**
+- GitHub Actions cron 특성상 수 분~최대 1시간 지연 가능
+- `OPERATOR_API_KEY`, `API_BASE_URL` 시크릿이 EC2 와 GitHub 에서 어긋나면 다음 회차부터 즉시 실패
+- 수동 재실행 시 같은 `base_date` 기준으로 워치리스트 변화 알림이 중복 발송될 수 있어, 추후 발송 이력 dedupe 테이블 도입 여지 있음
+
+**구현 기록**
+현재 워크플로는 아래와 같은 형태로 운영된다:
 
 ```yaml
 # .github/workflows/daily-sync.yml
@@ -504,10 +512,8 @@ jobs:
       - curl -X POST "$API/v1/risk/sync/run-tft-m3"
 ```
 
-또는 운영용 인프라(EC2 crontab, Railway cron service, Cloud Scheduler) 둘 중 택일.
-
 **배운 점**
-"코드가 있다" 와 "실제로 호출된다" 는 별개의 부채. 엔드포인트 구현은 1단계, 자동 호출은 2단계 — 2단계 누락은 외부에선 "기능이 동작하지 않음" 으로 인식됨. 6/10 LIVE 전에 cron 설정이 빠지면 사용자가 첫 방문 시 본 데이터가 그날 새로 들어온 데이터가 아니라 셋업 시점의 stale snapshot.
+"코드가 있다" 와 "실제로 호출된다" 는 별개의 부채다. 이번에는 외부 cron 연결까지 끝냈고, 이제 관심사는 "호출 유무"가 아니라 "지연, 재실행, 시크릿 불일치" 같은 운영 품질 관리로 이동했다.
 
 ---
 
@@ -517,7 +523,7 @@ jobs:
 [piвот 발표자료](피벗_발표자료.html) v3 에 명시된 "Kronos + TFT ensemble" 이 코드상 미구현. 현재는 TFT m3 단독 (`tft_m3_inference.py` 만 존재). Kronos pretrained 가중치 다운로드 / 어댑터 코드 / ensemble 융합 로직 모두 없음.
 
 **원인**
-피벗 자료의 Kill switch 정책 — "Kronos 통합이 2주 안에 안 되면 TFT 단독으로 LIVE" — 가 발동 중인 상태. 일정 우선순위가 (1) 50종목 확장, (2) cron 설정, (3) F-MODEL 엔드포인트 였고 Kronos 는 후순위로 밀려 있음.
+피벗 자료의 Kill switch 정책 — "Kronos 통합이 2주 안에 안 되면 TFT 단독으로 LIVE" — 가 발동 중인 상태. 50종목 확장과 cron 연결은 완료됐고, 현재는 F-MODEL 엔드포인트 및 사후 검증 계층이 우선순위다.
 
 **현재 상태**
 - 코드에는 Kronos 흔적 0 (search: `kronos` → 미발견)
@@ -536,11 +542,10 @@ LIVE 전 처리 필요 ↑ 우선순위 / 향후 PR 분리 ↓:
 **🔴 LIVE (6/10) 전 처리 필수**
 - **T+30 outcome 평가 cron** — 이슈 #18. 마이페이지 통계가 영원히 pending 으로 나가는 직접 원인.
 - **F-MODEL 엔드포인트 + 백테스트 서비스** — 이슈 #19. 발표자료 화면 05 의 "모델 정직성" 카드가 빈 채로 나가면 신뢰성 카피와 모순.
-- **매일 자동 cron** — 이슈 #20. 자동 호출자 없으면 stale 데이터로 첫 사용자 맞이.
-- **50종목 확장** — 현재 시드 `app/pipelines/tickers/seed.py` 가 6종목. 피벗 자료 약속은 50. yfinance rate limit 안에서 10종목 × 5배치로 분할 적재.
 - **ckpt 배포 SOP** — 이슈 #15. S3 또는 GitHub Releases 에서 받아오는 부트스트랩 스크립트.
 
 **🟡 LIVE 후 1~2개월 내**
+- **알림 중복 발송 방지** — 수동 재실행 / 동일 `base_date` 재처리 시 dedupe 필요 여부 검토.
 - **Kronos 통합** — 이슈 #21. ensemble 융합 가중치 grid search.
 - **모델 단위 테스트** — 백테스트 픽스처 + reproducible 추론 결과 단위 테스트.
 - **외부 API request-path 호출** — 이슈 #3. 추론 sync 엔드포인트가 yfinance / FRED 를 동기로 호출하는 부분이 남아있음. 운영 부하 진입 시 큐 분리.

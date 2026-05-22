@@ -35,6 +35,10 @@ services:
       # 운영(env=prod) 진입 시 config.py 가 빈 값/짧은 값/JWT_SECRET 동일성을 거부.
       OPERATOR_API_KEY: ${OPERATOR_API_KEY:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
+      # FCM — 둘 중 하나만 채우면 됨 (PATH 우선). 둘 다 비면 FCM 초기화 skip.
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_SERVICE_ACCOUNT_PATH: ${FIREBASE_SERVICE_ACCOUNT_PATH:-}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
     depends_on:
       db:
         condition: service_healthy
