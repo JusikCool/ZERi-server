@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-__all__ = ["feature_description", "build_summary_narrative"]
+__all__ = ["feature_description", "build_summary_narrative", "grade_phrase"]
 
 
 # 변수별 정적 설명 — 그 변수가 무엇을 측정하는지, 모델이 왜 참고하는지.
@@ -75,11 +75,21 @@ def feature_description(feature: str, label: str | None = None) -> str:
 # ---- summary narrative -------------------------------------------------
 
 
+# 등급 phrase — risk_ingest_service.reassign_grades_by_rank 의 분포 (50종목 중
+# HIGH 상위 10%, MID 상위 10-30%, LOW 하위 70%) 에 정확히 맞춰 표현.
+# 정직성: 분포를 그대로 phrase 에 박아 사용자에게 거짓말 안 함.
+# 짧고 ASCII-safe 한 형태 — LLM 이 정확히 복제하기 쉽도록 "(5개)" 같은 보조 정보는
+# prompt 의 풀이로 분리.
 _GRADE_PHRASE: dict[str, str] = {
-    "VOLATILITY_HIGH": "과거 분포 상위 5% 구간에 해당하는 통계적 고변동성 구간",
-    "VOLATILITY_MID": "과거 분포 상위 15% 구간에 해당하는 중간 변동성 구간",
-    "VOLATILITY_LOW": "과거 분포 평균 대비 안정 구간",
+    "VOLATILITY_HIGH": "시가총액 상위 50종목 중 변동성 상위 10%",
+    "VOLATILITY_MID": "시가총액 상위 50종목 중 변동성 상위 10-30%",
+    "VOLATILITY_LOW": "시가총액 상위 50종목 중 변동성 하위 70%",
 }
+
+
+def grade_phrase(grade: str) -> str:
+    """등급 코드 → 사람이 읽는 phrase. 미정의 grade 는 빈 문자열."""
+    return _GRADE_PHRASE.get(grade, "")
 
 
 def _format_worst_case(worst_case_pct: Decimal | float | None) -> str:
