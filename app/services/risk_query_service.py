@@ -25,6 +25,7 @@ from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.db.models import (
     AnalysisHistory,
+    LLMExplanation,
     Prediction,
     RiskGrade,
     Ticker,
@@ -224,6 +225,9 @@ async def get_verdict(
         )
 
     xai = await _load_xai(session, pred.prediction_id)
+    # llm_explanations 는 ticker PK — 50종목 = 50 rows. cron 이 매일 UPSERT.
+    # 미존재 시 None — 클라이언트가 summary_narrative 로 자연 폴백.
+    llm_row = await session.get(LLMExplanation, ticker_upper)
 
     analysis_id: int | None = None
     if user is not None and record and grade_row.current_price is not None:
@@ -268,6 +272,8 @@ async def get_verdict(
         ),
         xai=xai_section,
         summary_narrative=summary,
+        detailed_narrative=llm_row.content if llm_row else None,
+        detailed_narrative_base_date=llm_row.base_date if llm_row else None,
         analysis_id=analysis_id,
     )
 

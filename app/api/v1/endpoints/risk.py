@@ -1,10 +1,11 @@
-"""F-RISK 도메인 라우터 — 5개 endpoint.
+"""F-RISK 도메인 라우터.
 
 - GET  /v1/risk/spotlight       — 홈에서 한 종목 (HIGH worst top1)
 - GET  /v1/risk/{ticker}        — 단일 종목 종합 판결 (verdict 카드)
 - GET  /v1/risk/{ticker}/path   — q05/q15 path (fan chart)
 - GET  /v1/risk/{ticker}/attention — XAI features ("왜?" 버튼)
 - POST /v1/risk/sync/baseline   — 운영자/cron 모델 결과 적재
+- POST /v1/risk/sync/run-llm-explanations — Upstage Solar 정제 → llm_explanations UPSERT
 
 Rate limit (spec §16):
 - GET /v1/risk/* — 30/min/IP (게스트 남용 방지)
@@ -21,12 +22,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_optional_user, require_operator
+from app.core.config import get_settings
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppException
 from app.core.rate_limit import limiter
 from app.db.models import Price, Ticker, User
 from app.schemas.common import ApiResponse
 from app.schemas.risk import (
+    LLMExplanationResultItem,
     PredictionHistoryData,
     RiskAttentionData,
     RiskPathData,
@@ -35,6 +38,8 @@ from app.schemas.risk import (
     RunDbInferenceRequest,
     RunInferenceData,
     RunInferenceRequest,
+    RunLLMExplanationsData,
+    RunLLMExplanationsRequest,
     RunTftM3Data,
     RunTftM3Request,
     SpotlightData,
@@ -43,7 +48,7 @@ from app.schemas.risk import (
     SyncPredictionsData,
     SyncPredictionsRequest,
 )
-from app.services import risk_query_service
+from app.services import llm_explanation_service, risk_query_service
 from app.services.feature_engineering import MARKET_INDEX_TICKERS
 from app.services.risk_inference_baseline import run_baseline_inference
 from app.services.risk_inference_runner import run_inference
@@ -156,6 +161,61 @@ async def sync_run_tft_m3(
             skipped_tickers=skipped,
             model_name=payload.model_name,
             model_version=payload.model_version,
+        )
+    )
+
+
+# ---- POST /sync/run-llm-explanations (Upstage Solar 정제 + UPSERT) --------
+
+
+@router.post(
+    "/sync/run-llm-explanations",
+    response_model=ApiResponse[RunLLMExplanationsData],
+    dependencies=[Depends(require_operator)],
+    summary=(
+        "Upstage Solar 로 verdict 자연어 설명 생성 + llm_explanations UPSERT. "
+        "TFT 추론 직후 daily-batch cron 이 호출. LLM 미설정/검증 실패 시 "
+        "build_summary_narrative() 결과로 자동 폴백."
+    ),
+)
+async def sync_run_llm_explanations(
+    payload: RunLLMExplanationsRequest,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[RunLLMExplanationsData]:
+    settings = get_settings()
+    # llm_model 컬럼에는 실제 호출 모델명을 기록 — 미설정이면 "(fallback)" 으로 마킹
+    llm_model_label = (
+        settings.upstage_model if settings.is_upstage_configured else "(fallback)"
+    )
+
+    results = await llm_explanation_service.generate_for_active_tickers(
+        session,
+        llm_model_label=llm_model_label,
+        tickers=payload.tickers,
+    )
+
+    items = [
+        LLMExplanationResultItem(
+            ticker=r.ticker,
+            ok=r.ok,
+            fallback_used=r.fallback_used,
+            error=r.error,
+        )
+        for r in results
+    ]
+    updated = sum(1 for r in results if r.ok)
+    fallback_used = sum(1 for r in results if r.ok and r.fallback_used)
+    llm_used = updated - fallback_used
+    skipped = sum(1 for r in results if not r.ok)
+
+    return ApiResponse(
+        data=RunLLMExplanationsData(
+            total=len(results),
+            updated=updated,
+            llm_used=llm_used,
+            fallback_used=fallback_used,
+            skipped=skipped,
+            items=items,
         )
     )
 
