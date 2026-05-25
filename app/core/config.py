@@ -68,6 +68,26 @@ class Settings(BaseSettings):
     # 한 번 호출에 허용할 최대 추론 시간(초). 기본 4시간 (CPU Kronos 50종목 최대).
     inference_timeout_sec: int = 60 * 60 * 4
 
+    # ---- Upstage Solar LLM (XAI 자연어 정제) -------------------------------
+    # 50종목 LLM 설명 생성 — daily-batch cron 이 호출하는 POST /v1/risk/sync/run-llm-explanations.
+    # 비어있으면 LLM 호출 스킵 + 기존 build_summary_narrative() fallback.
+    # 키 발급: https://console.upstage.ai/ → API Keys.
+    upstage_api_key: str = ""
+    upstage_base_url: str = "https://api.upstage.ai/v1"
+    # Upstage Solar 모델명. 콘솔에서 사용 가능 모델 확인 후 지정.
+    # 정제 작업은 작은 모델로 충분 — 비용 최소화.
+    upstage_model: str = "solar-pro3"
+    # 한 종목당 LLM 호출 timeout (초). 50종목 순차 호출이라 너무 길면 cron 전체가 늘어짐.
+    upstage_timeout_sec: int = 30
+    # LLM 출력 검증 실패/예외 시 build_summary_narrative() 의 결과로 폴백.
+    # True 면 항상 LLM 호출 시도, False 면 어댑터 자체를 끄고 template 만 저장.
+    upstage_enabled: bool = True
+
+    @property
+    def is_upstage_configured(self) -> bool:
+        """Upstage 어댑터가 호출 가능한 상태인가."""
+        return self.upstage_enabled and bool(self.upstage_api_key.strip())
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -42,6 +42,9 @@ __all__ = [
     "RunDbInferenceData",
     "RunTftM3Request",
     "RunTftM3Data",
+    "RunLLMExplanationsRequest",
+    "RunLLMExplanationsData",
+    "LLMExplanationResultItem",
 ]
 
 
@@ -116,6 +119,11 @@ class RiskVerdictData(BaseModel):
     # XAI top 변수 + grade/worst-case 기반 1문장 요약 (xai_templates).
     # 화면 03 verdict 카드 narrative 라인용. xai 없으면 None.
     summary_narrative: str | None = None
+    # llm_explanations 테이블의 풀어쓴 한 단락 설명 (Upstage Solar 정제 또는 template fallback).
+    # 매일 cron 이 갱신. 미존재 시 None — 클라이언트는 summary_narrative 로 폴백.
+    detailed_narrative: str | None = None
+    # detailed_narrative 가 기반한 추론 기준일자. cron 실패로 며칠 묵었는지 표시 가능.
+    detailed_narrative_base_date: date | None = None
     # 인증 + record=true 일 때만 채워짐.
     analysis_id: int | None = None
 
@@ -386,3 +394,47 @@ class RunTftM3Data(BaseModel):
     skipped_tickers: list[str] = Field(default_factory=list)
     model_name: str
     model_version: str
+
+
+# ---- run-llm-explanations (50종목 LLM 정제 + UPSERT) ----------------------
+
+
+class RunLLMExplanationsRequest(BaseModel):
+    """Upstage Solar 로 verdict 설명 생성/갱신.
+
+    daily-batch cron 이 TFT 추론 직후 호출. tickers 미지정 시 active 전부.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tickers: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description="갱신할 종목 화이트리스트. 미지정 시 active 전체.",
+    )
+
+
+class LLMExplanationResultItem(BaseModel):
+    """단일 종목 처리 결과."""
+
+    ticker: str
+    ok: bool
+    fallback_used: bool
+    error: str | None = None
+
+
+class RunLLMExplanationsData(BaseModel):
+    """run-llm-explanations 결과 요약.
+
+    - updated: UPSERT 성공한 종목 수 (LLM 출력 또는 fallback 어느 쪽이든 저장된 케이스).
+    - llm_used: LLM 출력이 검증 통과해 저장된 종목 수.
+    - fallback_used: 검증 실패/예외로 template 결과가 저장된 종목 수.
+    - skipped: 입력 데이터 부족(prediction/xai 없음 등)으로 UPSERT 자체 안 된 종목.
+    """
+
+    total: int
+    updated: int
+    llm_used: int
+    fallback_used: int
+    skipped: int
+    items: list[LLMExplanationResultItem]

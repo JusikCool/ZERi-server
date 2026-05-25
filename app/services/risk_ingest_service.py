@@ -48,14 +48,20 @@ __all__ = [
     "ingest_predictions_from_csv",
     "ingest_predictions_from_json",
     "derive_grade",
+    "reassign_grades_by_rank",
     "DEFAULT_PREDICT_CSV",
 ]
 
 DEFAULT_PREDICT_CSV = "predict_example.csv"
 
-# Grade 임계값 — 모델 출력 분포 보고 조정. 양수가 클수록 "위험 적음".
+# 1차 임계값 (단일 종목 호출 fallback 용). cohort 가 있으면 rank 기반 재할당이 덮어씀.
 _HIGH_THRESHOLD = Decimal("-0.08")
 _MID_THRESHOLD = Decimal("-0.05")
+
+# Rank 기반 분포 — cohort 전체 (예: 50종목) 에서 위치로 grade 결정.
+# HIGH 10% / MID 다음 20% / LOW 나머지 70% — xai_templates._GRADE_PHRASE 와 정확히 일치.
+_RANK_HIGH_PCT = 0.10
+_RANK_MID_PCT = 0.30
 
 
 @dataclass
@@ -71,15 +77,43 @@ class _PerTickerAgg:
 
 
 def derive_grade(worst_case_pct: Decimal) -> tuple[str, str]:
-    """worst_case_pct → (grade, message_code).
+    """단일 종목 fallback — 임계값 기반.
 
-    분기 기준은 모듈 상단 _HIGH_THRESHOLD / _MID_THRESHOLD.
+    cohort 일괄 적재 시에는 reassign_grades_by_rank 가 덮어씀. 단일 종목 단위로
+    호출되는 (예: 운영자 수동 보정) 경로에서만 이 함수 결과가 최종.
     """
     if worst_case_pct <= _HIGH_THRESHOLD:
         return "VOLATILITY_HIGH", "HIGH_DOWNSIDE_PRESSURE"
     if worst_case_pct <= _MID_THRESHOLD:
         return "VOLATILITY_MID", "MODERATE_DOWNSIDE"
     return "VOLATILITY_LOW", "STABLE"
+
+
+def reassign_grades_by_rank(
+    grade_rows: list[tuple[str, str, str, Decimal]],
+) -> list[tuple[str, str, str, Decimal]]:
+    """cohort 전체 worst_case_pct 기준 rank → grade 재할당.
+
+    [xai_templates._GRADE_PHRASE] 가 "50종목 중 상위 10% / 10~30% / 하위 70%" 라고
+    선언하는 분포를 실제로 만든다. 정렬은 worst_case_pct ASC (음수가 클수록 위험).
+
+    cohort 가 비어있거나 1개면 그대로 반환.
+    """
+    if len(grade_rows) <= 1:
+        return grade_rows
+    sorted_rows = sorted(grade_rows, key=lambda r: r[3])
+    n = len(sorted_rows)
+    high_cutoff = max(1, int(round(n * _RANK_HIGH_PCT)))
+    mid_cutoff = max(high_cutoff + 1, int(round(n * _RANK_MID_PCT)))
+    out: list[tuple[str, str, str, Decimal]] = []
+    for i, (ticker, _g, _m, worst) in enumerate(sorted_rows):
+        if i < high_cutoff:
+            out.append((ticker, "VOLATILITY_HIGH", "HIGH_DOWNSIDE_PRESSURE", worst))
+        elif i < mid_cutoff:
+            out.append((ticker, "VOLATILITY_MID", "MODERATE_DOWNSIDE", worst))
+        else:
+            out.append((ticker, "VOLATILITY_LOW", "STABLE", worst))
+    return out
 
 
 def _read_predict_csv(path: Path) -> dict[str, _PerTickerAgg]:
@@ -227,6 +261,9 @@ async def ingest_predictions_from_csv(
                 f"skipped={skipped[:5]}..."
             ),
         )
+
+    # cohort 전체 rank 기반으로 grade 재할당 — 분포에 맞춰 정직하게.
+    grade_rows = reassign_grades_by_rank(grade_rows)
 
     # ---- predictions UPSERT --------------------------------------------------
     stmt = pg_insert(Prediction).values(pred_payloads)
@@ -408,6 +445,9 @@ async def ingest_predictions_from_json(
                 f"skipped={skipped[:5]}..."
             ),
         )
+
+    # cohort 전체 rank 기반으로 grade 재할당 — 분포에 맞춰 정직하게.
+    grade_rows = reassign_grades_by_rank(grade_rows)
 
     # ---- predictions UPSERT (returning prediction_id) ----------------------
     stmt = pg_insert(Prediction).values(pred_payloads)
