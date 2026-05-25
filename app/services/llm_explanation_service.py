@@ -123,7 +123,12 @@ def _build_fact_pack(
 
 
 def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None]:
-    """LLM 출력의 사실 보존 + 금칙어 체크. (ok, reason) 반환."""
+    """LLM 출력의 사실 보존 + 금칙어 체크. (ok, reason) 반환.
+
+    완화 정책: feature 라벨 누락은 warning 만 띄우고 통과 (LLM 이 자연어로
+    풀어쓰는 게 정상 — "나스닥 종가" → "지수" 같은 의역 허용). 핵심 수치
+    (worst_case_pct), 등급 phrase, 금칙어, 길이는 여전히 엄격.
+    """
     if not output or not output.strip():
         return False, "empty"
 
@@ -137,11 +142,11 @@ def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None
         if token not in output:
             return False, f"missing token: {token!r}"
 
-    # 변수 라벨 보존 (top_features 가 있을 때만)
+    # 변수 라벨 — 누락 시 reject 하지 않고 warning 만 (LLM 의역 허용).
     for f in fact_pack.get("top_features", []):
         label = f.get("label_kr") or ""
         if label and label not in output:
-            return False, f"missing feature label: {label!r}"
+            log.warning("llm output missing feature label %r (relaxed: passing)", label)
 
     # 금칙어
     for b in _BANNED_TOKENS:
