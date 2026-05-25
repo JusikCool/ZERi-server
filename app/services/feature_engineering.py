@@ -137,6 +137,18 @@ async def build_inference_panel(
             macro.pivot(index="Date", columns="indicator_code", values="value")
             .sort_index()
         )
+        # 분기별/월별 sparse 지표(GDP, CSUSHPISA 등)는 publish 날짜가 prices fetch
+        # 윈도우와 어긋나면 종목별 left-merge 후 모든 행이 NaN 으로 남아
+        # 나중 dropna 가 전체 패널을 삭제한다.
+        # → 일별 calendar 로 reindex + ffill 해서 다음 publish 전까지 직전 값 유지.
+        if not macro_wide.empty:
+            full_idx = pd.date_range(
+                macro_wide.index.min(),
+                macro_wide.index.max(),
+                freq="D",
+            )
+            macro_wide = macro_wide.reindex(full_idx).ffill()
+            macro_wide.index.name = "Date"
     else:
         macro_wide = pd.DataFrame()
 

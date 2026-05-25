@@ -7,6 +7,7 @@ from app.db.models.analysis_history import AnalysisHistory
 from app.db.models.backtest_result import BacktestResult
 from app.db.models.device_token import DeviceToken
 from app.db.models.disclaimer_ack import DisclaimerAck
+from app.db.models.llm_explanation import LLMExplanation
 from app.db.models.macro_indicator import MacroIndicator
 from app.db.models.marketing_consent import MarketingConsent
 from app.db.models.prediction import Prediction
@@ -36,4 +37,5 @@ __all__ = [
     "RefreshToken",
     "MarketingConsent",
     "DeviceToken",
+    "LLMExplanation",
 ]

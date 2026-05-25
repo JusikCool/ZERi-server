@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     auth,
     devices,
     history,
+    llm,
     macro,
     me,
     notifications,
@@ -38,5 +39,7 @@ api_router.include_router(macro.router, prefix="/macro", tags=["macro"])
 api_router.include_router(risk.router, prefix="/risk", tags=["risk"])
 # 푸시 알림 — notifications.py 의 path 가 /me/notifications/test, /notifications/send 풀로 적혀있어 prefix 없이 mount.
 api_router.include_router(notifications.router, tags=["notifications"])
+# LLM 디버그/연결 확인 — operator 전용.
+api_router.include_router(llm.router, prefix="/llm", tags=["llm"])
 
 # 추후: F-MODEL 2개, F-HISTORY 의 outcome 평가 cron (POST /v1/history/evaluate)
