@@ -1,4 +1,4 @@
-# 매일 새벽 자동 배치 — 가격/거시지표 적재 후 TFT 모델 추론.
+# 매일 새벽 자동 배치 — 가격/거시지표 적재 → TFT 모델 추론 → LLM 해설 정제.
 #
 # 실행 시각: KST 06:30 (= UTC 21:30 전날)
 #   - 미국 동부 16:00 NYSE 마감 후 약 30분
@@ -10,12 +10,12 @@
 #       API_BASE_URL      = http://3.34.46.157:8000
 #
 # 의존성 그래프 (한 job 안에서 순차):
-#   prices 적재 → macro 적재 → TFT 추론
+#   prices 적재 → macro 적재 → TFT 추론 → LLM 해설 → 알림 트리거
 #   앞 step 실패 시 다음 step 자동 skip.
 #
 # 디버깅: GitHub UI Actions 탭 → "Daily batch" → "Run workflow" 버튼으로 수동 trigger.
 
-name: Daily batch (prices + macro + TFT inference)
+name: Daily batch (prices + macro + TFT inference + LLM)
 
 on:
   schedule:
@@ -33,6 +33,14 @@ on:
           - 'true'
       skip_trigger:
         description: '알림 발송 step 건너뛰기 (FCM 시크릿 미설정 시)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      skip_llm:
+        description: 'LLM 해설 정제 step 건너뛰기 (Upstage 키 미설정/장애 시)'
         required: false
         default: 'false'
         type: choice
@@ -120,7 +128,29 @@ jobs:
           n_preds=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('predictions_upserted', 'unknown'))")
           echo "✓ Inference complete — tickers=$n_tickers, predictions=$n_preds"
 
-      # ─── Step 4: 워치리스트 grade 변화 감지 + 푸시 알림 발송 ───────────
+      # ─── Step 4: LLM 해설 정제 — Upstage Solar 로 verdict 자연어 풀어쓰기 ──
+      # TFT 추론이 끝나야 의미 있음 (predictions/risk_grades/xai 가 최신이어야 정제 입력).
+      # Upstage 키 미설정 / 호출 실패 시 서비스 내부에서 자동 폴백 (template summary).
+      # → step 자체는 200 떨어지지만 응답 본문 llm_used / fallback_used 로 비율 확인.
+      - name: Run LLM explanations (Upstage Solar)
+        id: llm
+        if: ${{ inputs.skip_inference != 'true' && inputs.skip_llm != 'true' }}
+        timeout-minutes: 6
+        run: |
+          set -e
+          echo "POST $API_BASE/v1/risk/sync/run-llm-explanations"
+          response=$(curl -fsS --max-time 330 -X POST \
+            "$API_BASE/v1/risk/sync/run-llm-explanations" \
+            -H "X-Operator-Key: $OP_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          echo "$response" | tee /tmp/llm.json
+          total=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('total', 'unknown'))")
+          llm_used=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('llm_used', 'unknown'))")
+          fallback=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['data'].get('fallback_used', 'unknown'))")
+          echo "✓ LLM explanations — total=$total, llm_used=$llm_used, fallback_used=$fallback"
+
+      # ─── Step 5: 워치리스트 grade 변화 감지 + 푸시 알림 발송 ───────────
       # 추론 step 이 끝나야 의미 있음 (predictions 가 최신이어야 변화 감지).
       # FCM 시크릿이 서버에 없으면 발송 자체는 INTERNAL_ERROR — workflow 는 fail.
       # FCM 셋업 완료 전까지는 workflow_dispatch 의 skip_trigger=true 로 우회.
