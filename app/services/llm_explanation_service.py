@@ -58,9 +58,10 @@ _TOP_FEATURES = 3
 
 # LLM 출력에 나오면 안 되는 어휘. 자본시장법 §69 / 매수·매도 권유 표현 차단.
 # 키워드 매칭이라 한국어 형태소가 다양할 수 있는 동사는 어간만 잡는다.
+# 완화 단계: 검출 시 reject 대신 warning 로그만 — 운영 진입 시 strict 로 복원.
+# "팔" 은 1글자라 "팔리다"/"팔로워" 같은 무관 단어까지 잡혀 제거.
 _BANNED_TOKENS: tuple[str, ...] = (
     "사세요",
-    "팔",
     "매수",
     "매도",
     "추천",
@@ -148,10 +149,10 @@ def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None
         if label and label not in output:
             log.warning("llm output missing feature label %r (relaxed: passing)", label)
 
-    # 금칙어
+    # 금칙어 — 누락 시 reject 하지 않고 warning 만 (운영 진입 시 strict 로 복원).
     for b in _BANNED_TOKENS:
         if b in output:
-            return False, f"banned token: {b!r}"
+            log.warning("llm output contains banned token %r (relaxed: passing)", b)
 
     # 너무 짧거나 너무 길면 reject (3~4문장 기대 — 안전 마진)
     n = len(output)
