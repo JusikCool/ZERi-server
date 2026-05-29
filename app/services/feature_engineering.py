@@ -158,6 +158,13 @@ async def build_inference_panel(
         g = g.sort_values("Date").reset_index(drop=True)
         g = g.merge(vix, on="Date", how="left")
         g = g.merge(ixic, on="Date", how="left")
+        # 시장지수(^VIX, ^IXIC)도 결측일(인덱스 휴장·데이터 공백)이 생기면
+        # VIX_Close/NASDAQ_Close 가 NaN 으로 남는다. 이 컬럼들은 아래 dropna 대상이
+        # 아니라서 그대로 살아남아 TimeSeriesDataSet 의 NaN 검증에서 터진다.
+        # → 매크로와 동일하게 종목 시계열 내에서 ffill→bfill 로 직전/직후 값 유지.
+        for c in ("VIX_Close", "NASDAQ_Close"):
+            if c in g.columns:
+                g[c] = g[c].ffill().bfill()
         if not macro_wide.empty:
             g = g.merge(macro_wide.reset_index(), on="Date", how="left")
             # 월별 매크로는 ffill → bfill 둘 다 적용:
