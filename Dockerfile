@@ -24,8 +24,8 @@ RUN uv sync --no-install-project --extra inference
 # App code (app/ml/ 의 TFT 모델 코드도 포함됨)
 COPY . .
 
-# 모델 가중치 (m3.ckpt) 는 .dockerignore 에서 제외 안 함 — 이미지에 포함.
-# 크기: ~6MB. 추후 S3 등으로 분리하려면 별도 작업.
+# 모델 가중치 (m4.ckpt) 는 .dockerignore 에서 제외 안 함 — 이미지에 포함.
+# 크기: ~3MB. 추후 S3 등으로 분리하려면 별도 작업.
 
 EXPOSE 8000
 

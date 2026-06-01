@@ -31,6 +31,7 @@ inference = [
     "pytorch-forecasting>=1.0",
     "numpy>=1.26",
     "scikit-learn>=1.4",
+    "arch>=7.0",
 ]
 
 [dependency-groups]

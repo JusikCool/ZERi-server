@@ -6,7 +6,19 @@ from pytorch_forecasting.metrics import QuantileLoss
 from .loss import AdaptivePinballLoss
 
 
-class M3FullModel(pl.LightningModule):
+class M4FullModel(pl.LightningModule):
+    """
+    M4 확장 모델 (추론 전용 vendored 버전).
+
+    [M4-Combined] use_garch_sigma=True + vol_group static categorical
+                   + ticker_to_vol_group_idx
+      → σ 자리 GARCH_Variance + vol_group 별 α/β 적용
+
+    추론 시에는 AdaptivePinballLoss(학습용)는 호출되지 않고 self.tft 의 forward
+    /predict 만 사용한다. loss 코드는 from_dataset 구성과 state_dict 호환을 위해
+    남겨둔다.
+    """
+
     def __init__(
         self,
         tft: TemporalFusionTransformer,
@@ -16,6 +28,7 @@ class M3FullModel(pl.LightningModule):
         learning_rate: float = 0.001,
         vix_mean: float = 0.0,
         vix_std: float = 1.0,
+        ticker_to_vol_group_idx: torch.Tensor = None,
     ):
         super().__init__()
         self.tft = tft
@@ -25,6 +38,13 @@ class M3FullModel(pl.LightningModule):
         self.learning_rate = learning_rate
         self.vix_mean = vix_mean
         self.vix_std = vix_std
+
+        # ticker idx → vol_group idx 매핑 buffer (None 이면 empty tensor)
+        if ticker_to_vol_group_idx is None:
+            ticker_to_vol_group_idx = torch.tensor([], dtype=torch.long)
+        self.register_buffer(
+            "ticker_to_vol_group_idx", ticker_to_vol_group_idx
+        )
 
     @classmethod
     def from_dataset(
@@ -45,15 +65,25 @@ class M3FullModel(pl.LightningModule):
         alpha_up: float = 1.0,
         beta_up: float = 1.0,
         crossing_weight: float = 0.1,
-    ) -> "M3FullModel":
-        quantiles = quantiles or [0.05,0.10,0.15,0.20,0.25,0.30,
-             0.35,0.40,0.45,0.50,0.55,
-             0.60,0.65,0.70,0.75,0.80,
-             0.85,0.90,0.95]
+        use_garch_sigma: bool = True,
+        ticker_to_vol_group_idx: torch.Tensor = None,
+        group_labels: list[str] = None,
+        alpha_down_by_group: dict = None,
+        beta_down_by_group: dict = None,
+        alpha_up_by_group: dict = None,
+        beta_up_by_group: dict = None,
+    ) -> "M4FullModel":
+        quantiles = quantiles or [0.1, 0.5, 0.9]
+        group_labels = group_labels or ["low_vol", "mid_vol", "high_vol"]
 
         reals: list[str] = dataset.reals
         vix_idx = reals.index("VIX_Close")
-        sigma_idx = reals.index("Realized_Vol_20d")
+
+        # σ 자리 선택: GARCH_Variance (M4) 우선, 없으면 Realized_Vol_20d (M3 호환)
+        if use_garch_sigma and "GARCH_Variance" in reals:
+            sigma_idx = reals.index("GARCH_Variance")
+        else:
+            sigma_idx = reals.index("Realized_Vol_20d")
 
         tft = TemporalFusionTransformer.from_dataset(
             dataset,
@@ -68,6 +98,14 @@ class M3FullModel(pl.LightningModule):
             reduce_on_plateau_patience=4,
         )
 
+        if ticker_to_vol_group_idx is not None:
+            if not isinstance(ticker_to_vol_group_idx, torch.Tensor):
+                ticker_to_vol_group_idx = torch.tensor(
+                    ticker_to_vol_group_idx, dtype=torch.long
+                )
+            else:
+                ticker_to_vol_group_idx = ticker_to_vol_group_idx.long()
+
         adaptive_loss = AdaptivePinballLoss(
             quantiles=quantiles,
             vix_threshold=vix_threshold,
@@ -78,6 +116,11 @@ class M3FullModel(pl.LightningModule):
             alpha_up=alpha_up,
             beta_up=beta_up,
             crossing_weight=crossing_weight,
+            group_labels=group_labels,
+            alpha_down_by_group=alpha_down_by_group,
+            beta_down_by_group=beta_down_by_group,
+            alpha_up_by_group=alpha_up_by_group,
+            beta_up_by_group=beta_up_by_group,
         )
 
         return cls(
@@ -88,48 +131,11 @@ class M3FullModel(pl.LightningModule):
             learning_rate=learning_rate,
             vix_mean=vix_mean,
             vix_std=vix_std,
+            ticker_to_vol_group_idx=ticker_to_vol_group_idx,
         )
 
     def forward(self, x: dict) -> dict:
         return self.tft(x)
-
-    def _extract_vix_sigma(
-        self, x: dict, pred_len: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        enc = x["encoder_cont"]
-        vix_norm = enc[:, -1, self.vix_encoder_idx]
-        vix_raw = vix_norm * self.vix_std + self.vix_mean
-        vix = vix_raw.unsqueeze(1).expand(-1, pred_len)
-        sigma = enc[:, -1, self.sigma_encoder_idx].unsqueeze(1).expand(-1, pred_len)
-        return vix, sigma
-
-    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
-        x, y = batch
-        y_true = y[0]
-        pred_len = y_true.shape[1]
-
-        out = self.tft(x)
-        y_pred = out["prediction"]
-
-        vix, sigma = self._extract_vix_sigma(x, pred_len)
-        loss = self.adaptive_loss(y_pred, y_true, vix, sigma)
-
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        return loss
-
-    def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
-        x, y = batch
-        y_true = y[0]
-        pred_len = y_true.shape[1]
-
-        out = self.tft(x)
-        y_pred = out["prediction"]
-
-        vix, sigma = self._extract_vix_sigma(x, pred_len)
-        loss = self.adaptive_loss(y_pred, y_true, vix, sigma)
-
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        return loss
 
     def predict(self, x: dict) -> torch.Tensor:
         self.eval()

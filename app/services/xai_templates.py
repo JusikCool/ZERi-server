@@ -7,7 +7,7 @@ UI 화면(04 / 03 verdict) 에 표시되는 설명 문장을 모아둔 모듈.
 - feature_description(feature, label): 변수별 1문장 설명. 화면 04 카드용.
 - build_summary_narrative(grade, worst_case_pct, top_features): verdict 응답 상단 요약 1문장.
 
-feature 명은 m3 모델의 encoder variable 명(tft_m3_inference._LABEL_KR 키)과 일치한다.
+feature 명은 m4 모델의 encoder variable 명(tft_m4_inference._LABEL_KR 키)과 일치한다.
 새 변수가 추가되면 _FEATURE_TEMPLATES 에도 같이 추가. 미존재 키는 generic fallback.
 """
 
@@ -23,6 +23,7 @@ __all__ = ["feature_description", "build_summary_narrative", "grade_phrase"]
 _FEATURE_TEMPLATES: dict[str, str] = {
     # ---- 가격·변동성 시계열
     "Realized_Vol_20d": "지난 20거래일 종가의 표준편차로 측정한 최근 변동성 수준입니다.",
+    "GARCH_Variance": "GARCH(1,1) 모형으로 추정한 조건부 변동성 — 변동성의 군집(clustering)과 지속성을 반영합니다.",
     "ATR_14": "14일 평균 진폭(ATR) — 일중 가격 변동 폭의 평균치로 변동성 강도를 나타냅니다.",
     "RSI_14": "14일 상대강도지수(RSI) — 70 이상은 통계적 과열, 30 이하는 과매도 구간으로 해석됩니다.",
     "SMA_20": "20일 단순 이동평균선 — 단기 추세의 기준선으로 사용됩니다.",
