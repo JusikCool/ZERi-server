@@ -365,22 +365,22 @@ class RunDbInferenceData(BaseModel):
     model_version: str
 
 
-# ---- run-tft-m3 (서버 내장 TFT m3) ----------------------------------------
+# ---- run-tft-m3 (서버 내장 TFT m4; route 명은 호환 위해 유지) ----------------
 
 
 class RunTftM3Request(BaseModel):
-    """DB → m3.ckpt 직접 추론 → 19 quantile + XAI 저장.
+    """DB → m4.ckpt 직접 추론 → 19 quantile + XAI 저장.
 
-    서버 안에 있는 app/ml/m3_tft 모델 코드 + models/m3.ckpt 사용.
-    외부 의존성 0.
+    서버 안에 있는 app/ml/m4_tft 모델 코드 + models/m4.ckpt 사용. 외부 의존성 0.
+    (클래스/route 명은 cron·클라이언트 계약 유지를 위해 m3 명칭 그대로 둠.)
     """
 
     model_config = ConfigDict(extra="forbid")
 
     base_date: date | None = None
     horizon_days: int | None = Field(default=None, ge=1, le=60)
-    model_name: str = "tft-m3"
-    model_version: str = "m3"
+    model_name: str = "tft-m4"
+    model_version: str = "m4"
 
 
 class RunTftM3Data(BaseModel):

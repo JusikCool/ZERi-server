@@ -11,19 +11,14 @@ model:
              0.35,0.40,0.45,0.50,0.55,
              0.60,0.65,0.70,0.75,0.80,
              0.85,0.90,0.95]
-  vix_threshold: 25     # λt 선형 증가 시작 임계값 (raw VIX 기준, 주요 시장 위기 구간 하한선)
-  hidden_size: 64
-  attention_head_size: 4
+  vix_threshold: 25     # λt 선형 증가 시작 임계값 (raw VIX 기준)
+  # m4.ckpt 실측 shape 기준 (hidden_size 64→32, attn 4→2):
+  #   multihead_attn.v_layer (16,32) → hidden_size=32, attention_head_size=2
+  #   static flattened_grn.fc1 (5,113) → vol_group static categorical 포함
+  hidden_size: 32
+  attention_head_size: 2
+  hidden_continuous_size: 32
   dropout: 0.1
   learning_rate: 0.0003
   max_epochs: 50
   batch_size: 64
-
-ablation:
-  m1_fixed_pinball: true    # M1 고정 Loss
-  m2_vix_only: true         # M2 VIX만 반영
-  m3_full_model: true       # M3 VIX + σ 완전 Adaptive
-
-validation:
-  violation_rate_threshold: 0.05
-  kupiec_pvalue_threshold: 0.05

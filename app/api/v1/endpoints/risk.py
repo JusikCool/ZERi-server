@@ -56,7 +56,7 @@ from app.services.risk_ingest_service import (
     ingest_predictions_from_csv,
     ingest_predictions_from_json,
 )
-from app.services.tft_m3_inference import run_tft_m3_inference
+from app.services.tft_m4_inference import run_tft_m4_inference
 from app.services.xai_ingest_service import ingest_xai_from_csv
 
 router = APIRouter()
@@ -102,7 +102,9 @@ async def sync_baseline(
     )
 
 
-# ---- POST /sync/run-tft-m3 (DB → 진짜 TFT m3 추론 → 저장) -----------------
+# ---- POST /sync/run-tft-m3 (DB → 진짜 TFT m4 추론 → 저장) -----------------
+# NOTE: route 경로(/sync/run-tft-m3)는 GitHub Actions cron·클라이언트 계약 유지를
+#       위해 그대로 두고, 내부 추론만 m3 → m4 로 교체했다.
 
 
 @router.post(
@@ -110,15 +112,16 @@ async def sync_baseline(
     response_model=ApiResponse[RunTftM3Data],
     dependencies=[Depends(require_operator)],
     summary=(
-        "DB(prices+macro) → m3.ckpt 직접 추론 → predictions/risk_grades/xai 저장. "
-        "서버 내장 모델 (app/ml/m3_tft + models/m3.ckpt). 외부 의존성 0."
+        "DB(prices+macro) → m4.ckpt 직접 추론 → predictions/risk_grades/xai 저장. "
+        "서버 내장 모델 (app/ml/m4_tft + models/m4.ckpt). 외부 의존성 0. "
+        "(route 명은 호환 위해 run-tft-m3 유지)"
     ),
 )
 async def sync_run_tft_m3(
     payload: RunTftM3Request,
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RunTftM3Data]:
-    inference = await run_tft_m3_inference(
+    inference = await run_tft_m4_inference(
         session,
         base_date=payload.base_date,
         horizon_days=payload.horizon_days,
