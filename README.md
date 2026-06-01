@@ -27,7 +27,7 @@
 - ✅ /me/notifications/test + /notifications/send — FCM 발송 어댑터 (firebase-admin), 마케팅 동의 검증, 죽은 토큰 자동 revoke
 - ✅ /notifications/run-watchlist-trigger — 워치리스트 grade 변화 감지 + cron 자동 발송 (daily-batch.yml Step 4 통합)
 - ✅ /me/watchlist — GET / POST / DELETE, 안전 상한 100, 중복·비활성 차단, 멱등 삭제, rate limit
-- ✅ risk — spotlight / verdict / path / attention 4개 GET + sync 5개 POST. **서버 내장 TFT m3 추론** (`/sync/run-tft-m3`) → predictions / risk_grades / xai_explanations 자동 적재. XAI 자연어 설명 + summary_narrative 응답 포함.
+- ✅ risk — spotlight / verdict / path / attention 4개 GET + sync 5개 POST. **서버 내장 TFT m4 추론** (`/sync/run-tft-m3` — route 명은 호환 위해 유지) → predictions / risk_grades / xai_explanations 자동 적재. XAI 자연어 설명 + summary_narrative 응답 포함.
 - ✅ /me/history — list / stats / detail 3개 GET. `record=true` 시 verdict 조회 스냅샷을 analysis_history 에 INSERT.
 - ✅ **operator API key 가드** — `/sync/*` 8개 라우트가 `X-Operator-Key` 헤더 검증 (PR #19). 운영자/cron 전용. cron 자동화 사전 단계.
 - ✅ **운영 안전성** — prod 환경에서 약한 시크릿 / `CORS=*` / `JWT==OPERATOR` 부팅 거부. compose에 `${VAR:?}` 강제. dev/운영 compose 분리.
@@ -70,14 +70,14 @@ ZERi-server/
 │   │   ├── risk_ingest_service.py       # predictions/risk_grades/xai UPSERT 공용 코어
 │   │   ├── risk_inference_runner.py     # 외부 ZERi-ai-model 스크립트 호출 변형
 │   │   ├── risk_inference_baseline.py   # 통계 baseline 추론
-│   │   ├── tft_m3_inference.py          # 서버 내장 m3.ckpt 추론 (PyTorch)
+│   │   ├── tft_m4_inference.py          # 서버 내장 m4.ckpt 추론 (PyTorch, GARCH+vol_group)
 │   │   ├── xai_ingest_service.py        # XAI CSV → JSON 적재
 │   │   ├── xai_templates.py             # 변수별 한국어 설명 + summary_narrative 빌더
 │   │   ├── feature_engineering.py       # 추론 입력 panel 생성
 │   │   ├── fred_service.py              # FRED 어댑터
 │   │   └── yfinance_service.py          # yfinance 어댑터
 │   ├── ml/
-│   │   └── m3_tft/         # TFT 모델 코드 (model/dataset/loss/config)
+│   │   └── m4_tft/         # TFT 모델 코드 (model/dataset/loss/config)
 │   ├── pipelines/          # 시드 (tickers, macro)
 │   └── api/
 │       ├── deps.py         # get_db, get_current_user, get_optional_user
@@ -92,7 +92,7 @@ ZERi-server/
 │   └── ISSUES.md           # 이슈/해결 + 부채 목록
 │
 ├── models/
-│   └── m3.ckpt             # ⚠️ git 추적 X (.gitignore). 외부 채널로 별도 공유
+│   └── m4.ckpt             # ⚠️ git 추적 X (.gitignore). 외부 채널로 별도 공유
 │
 ├── alembic/versions/       # 자동 생성 마이그레이션
 └── tests/                  # 격리 schema fixture + 도메인별 시나리오

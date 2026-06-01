@@ -32,6 +32,45 @@ MACRO_CODES = [
 MARKET_INDEX_TICKERS = ["^VIX", "^IXIC"]
 
 
+def _compute_garch_variance(returns: pd.Series) -> pd.Series:
+    """단일 종목 Returns(fraction) → GARCH(1,1) 조건부 분산(연율화) 시계열.
+
+    m4 모델은 σ 자리에 GARCH_Variance 를 입력 feature 로 받는다
+    (Buczyński & Chlebus 2024 GARCHNet 차용). 학습 때 쓴 원본 전처리 스크립트가
+    유실되어, 동일 의도(GARCH(1,1) 조건부 변동성)를 arch 패키지로 재현한다.
+
+    - mean='Constant', vol='GARCH', p=1, q=1, dist='normal' (표준 GARCH(1,1))
+    - arch 수렴 안정을 위해 returns*100 (percent) 로 적합 후 다시 환산
+    - 연율화 분산: (daily_cond_vol_fraction * sqrt(252))**2
+      → Realized_Vol_20d(연율화 vol)와 같은 스케일대 → 모델이 읽기 쉬움.
+      (TimeSeriesDataSet 이 어차피 reals 를 StandardScaler 로 재정규화하므로
+       절대 스케일보다 시계열 동학이 중요.)
+
+    적합 실패/데이터 부족 시 rolling 분산(EWMA 유사)으로 fallback.
+    """
+    out = pd.Series(np.nan, index=returns.index, dtype=float)
+    valid = returns.dropna()
+    if len(valid) < 50:
+        # 데이터 부족 → 단순 rolling 분산(연율화) fallback
+        return (returns.rolling(20).std() * np.sqrt(252)) ** 2
+
+    try:
+        from arch import arch_model
+
+        scaled = valid * 100.0  # percent
+        am = arch_model(scaled, mean="Constant", vol="GARCH", p=1, q=1, dist="normal")
+        res = am.fit(disp="off", show_warning=False)
+        # conditional_volatility: percent 단위 daily → fraction daily 로 환산
+        cond_vol_daily = res.conditional_volatility / 100.0
+        ann_var = (cond_vol_daily * np.sqrt(252)) ** 2
+        out.loc[valid.index] = ann_var.values
+    except Exception:  # noqa: BLE001 — 수렴 실패 등은 fallback 으로 처리
+        return (returns.rolling(20).std() * np.sqrt(252)) ** 2
+
+    # GARCH 가 채우지 못한 선두 NaN 은 직후 값으로 backfill (warmup dropna 보호)
+    return out.bfill()
+
+
 def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """단일 종목 DataFrame (Date sorted) → 기술지표 + 수익률 컬럼 추가."""
     df = df.copy()
@@ -52,6 +91,9 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     low_close = (df["Low"] - df["Close"].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df["ATR_14"] = tr.rolling(14).mean()
+
+    # ===== M4: GARCH(1,1) 조건부 분산 (모델 σ feature) =====
+    df["GARCH_Variance"] = _compute_garch_variance(df["Returns"])
     return df
 
 
@@ -187,7 +229,10 @@ async def build_inference_panel(
 
     panel = pd.concat(panels, ignore_index=True)
     # warmup NaN 제거 — 기술지표 + 매크로 둘 다 valid 해야 모델 input 으로 OK
-    drop_cols = ["Returns", "Realized_Vol_20d", "RSI_14", "ATR_14", "SMA_20"] + MACRO_CODES
+    drop_cols = (
+        ["Returns", "Realized_Vol_20d", "RSI_14", "ATR_14", "SMA_20", "GARCH_Variance"]
+        + MACRO_CODES
+    )
     panel = panel.dropna(subset=drop_cols).reset_index(drop=True)
     panel["time_idx"] = panel.groupby("group_id").cumcount()
     return panel
