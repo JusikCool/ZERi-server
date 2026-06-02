@@ -29,6 +29,7 @@ __all__ = [
     "RiskXaiSection",
     "RiskVerdictData",
     "RiskPathData",
+    "RiskQuantilePathData",
     "RiskAttentionData",
     "SyncBaselineRequest",
     "SyncBaselineData",
@@ -143,6 +144,16 @@ class RiskPathData(BaseModel):
     # 클라이언트가 다중 분위수 라인을 토글하며 그릴 수 있게 노출.
     # DB 에 없으면 None.
     quantile_paths: dict[str, list[float]] | None = None
+
+
+class RiskQuantilePathData(BaseModel):
+    """GET /v1/risk/{ticker}/path/q10 — 단일 분위수(0.1) 경로만 가볍게 반환."""
+
+    ticker: str
+    base_date: date
+    horizon_days: int
+    quantile_level: float  # 0.1
+    path: list[float]  # 일자별 0.1 분위수 path (horizon_days 길이)
 
 
 # ---- 티커별 전체 예측 이력 -------------------------------------------------
