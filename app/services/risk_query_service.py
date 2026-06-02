@@ -40,6 +40,7 @@ from app.schemas.risk import (
     RiskGradeSection,
     RiskPathData,
     RiskPredictionSection,
+    RiskQuantilePathData,
     RiskVerdictData,
     RiskXaiFeature,
     RiskXaiSection,
@@ -304,6 +305,44 @@ async def get_path(session: AsyncSession, ticker: str) -> RiskPathData:
             if pred.quantile_paths
             else None
         ),
+    )
+
+
+async def get_quantile_path(
+    session: AsyncSession, ticker: str, *, level: float = 0.10
+) -> RiskQuantilePathData:
+    """단일 분위수 경로만 반환 (기본 0.1). quantile_paths dict 에서 추출.
+
+    키 형식은 risk_ingest_service._quantile_key 와 동일 (소수 2자리 zero-pad).
+    """
+    ticker_upper = ticker.upper()
+
+    t = await session.get(Ticker, ticker_upper)
+    if t is None or not t.is_active:
+        raise AppException(
+            ErrorCode.TICKER_NOT_FOUND,
+            details={"ticker": ticker_upper},
+        )
+
+    pred = await _load_latest_prediction(session, ticker_upper)
+    key = f"{level:.2f}"
+    qp = pred.quantile_paths or {}
+    path = qp.get(key)
+    if path is None:
+        raise AppException(
+            ErrorCode.PREDICTION_NOT_READY,
+            message=(
+                f"{key} 분위수 경로 없음 (해당 예측에 quantile_paths 미저장). "
+                f"최신 모델(m4) 추론을 다시 실행하세요."
+            ),
+            details={"ticker": ticker_upper, "quantile": key},
+        )
+    return RiskQuantilePathData(
+        ticker=ticker_upper,
+        base_date=pred.base_date,
+        horizon_days=pred.horizon_days,
+        quantile_level=level,
+        path=[float(x) for x in path],
     )
 
 
