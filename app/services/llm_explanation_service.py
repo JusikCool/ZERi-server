@@ -128,17 +128,17 @@ def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None
 
     완화 정책: feature 라벨 누락은 warning 만 띄우고 통과 (LLM 이 자연어로
     풀어쓰는 게 정상 — "나스닥 종가" → "지수" 같은 의역 허용). 핵심 수치
-    (worst_case_pct), 등급 phrase, 금칙어, 길이는 여전히 엄격.
+    (worst_case_pct), 금칙어, 길이는 여전히 엄격.
+
+    v11(3섹션 구조): 섹션1이 worst-case 만 다루고 등급 phrase 는 일부러 본문에서
+    제외하므로, 등급 phrase 필수 토큰 검증을 제거 (프롬프트와 검증기 충돌 해소).
     """
     if not output or not output.strip():
         return False, "empty"
 
-    # 핵심 숫자/문구 보존 — worst_case_pct 와 등급 phrase 는 엄격하게.
+    # 핵심 숫자 보존 — worst_case_pct 만 엄격 (v11 은 등급 phrase 를 본문에서 뺌).
     # horizon_days 는 토스 톤에서 "한 달" 같이 풀어 쓰는 게 자연스러워 검증에서 제외.
     must_appear = [fact_pack["worst_case_pct"]]
-    grade_phrase = fact_pack.get("grade_phrase") or ""
-    if grade_phrase:
-        must_appear.append(grade_phrase)
     for token in must_appear:
         if token not in output:
             return False, f"missing token: {token!r}"
@@ -154,9 +154,9 @@ def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None
         if b in output:
             log.warning("llm output contains banned token %r (relaxed: passing)", b)
 
-    # 너무 짧거나 너무 길면 reject (3~4문장 기대 — 안전 마진)
+    # 너무 짧거나 너무 길면 reject (v11 3섹션 구조라 한 단락보다 길어 상한 완화)
     n = len(output)
-    if n < 80 or n > 1200:
+    if n < 80 or n > 2000:
         return False, f"length out of range: {n}"
 
     return True, None
