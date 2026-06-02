@@ -35,6 +35,12 @@ services:
       # 운영(env=prod) 진입 시 config.py 가 빈 값/짧은 값/JWT_SECRET 동일성을 거부.
       OPERATOR_API_KEY: ${OPERATOR_API_KEY:-}
       FRED_API_KEY: ${FRED_API_KEY:-}
+      # Upstage Solar LLM (XAI 자연어 정제). 미설정/false 면 template fallback.
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
+      UPSTAGE_BASE_URL: ${UPSTAGE_BASE_URL:-https://api.upstage.ai/v1}
+      UPSTAGE_MODEL: ${UPSTAGE_MODEL:-solar-pro3}
+      UPSTAGE_TIMEOUT_SEC: ${UPSTAGE_TIMEOUT_SEC:-30}
+      UPSTAGE_ENABLED: ${UPSTAGE_ENABLED:-true}
       # FCM — 둘 중 하나만 채우면 됨 (PATH 우선). 둘 다 비면 FCM 초기화 skip.
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_SERVICE_ACCOUNT_PATH: ${FIREBASE_SERVICE_ACCOUNT_PATH:-}
