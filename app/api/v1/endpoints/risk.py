@@ -33,6 +33,7 @@ from app.schemas.risk import (
     PredictionHistoryData,
     RiskAttentionData,
     RiskPathData,
+    RiskQuantilePathData,
     RiskVerdictData,
     RunDbInferenceData,
     RunDbInferenceRequest,
@@ -470,6 +471,24 @@ async def get_path_endpoint(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RiskPathData]:
     data = await risk_query_service.get_path(session, ticker)
+    return ApiResponse(data=data)
+
+
+# ---- GET /{ticker}/path/q10 (0.1 분위수 경로만) ----------------------------
+
+
+@router.get(
+    "/{ticker}/path/q10",
+    response_model=ApiResponse[RiskQuantilePathData],
+    summary="0.1(10%) 분위수 경로 — 단일 분위수 path 만 가볍게",
+)
+@limiter.limit("30/minute")
+async def get_path_q10_endpoint(
+    request: Request,
+    ticker: str,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[RiskQuantilePathData]:
+    data = await risk_query_service.get_quantile_path(session, ticker, level=0.10)
     return ApiResponse(data=data)
 
 
