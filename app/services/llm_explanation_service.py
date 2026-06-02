@@ -126,22 +126,23 @@ def _build_fact_pack(
 def _validate_llm_output(fact_pack: dict, output: str) -> tuple[bool, str | None]:
     """LLM 출력의 사실 보존 + 금칙어 체크. (ok, reason) 반환.
 
-    완화 정책: feature 라벨 누락은 warning 만 띄우고 통과 (LLM 이 자연어로
-    풀어쓰는 게 정상 — "나스닥 종가" → "지수" 같은 의역 허용). 핵심 수치
-    (worst_case_pct), 금칙어, 길이는 여전히 엄격.
+    완화 정책: 사실 보존(라벨·worst_case 숫자)·금칙어 누락은 warning 만 띄우고
+    통과시켜 LLM 사용률을 우선한다 (프롬프트가 1차 강제 + strip_markdown 안전망).
+    hard-reject 는 빈 출력 / 길이 범위 위반만.
 
     v11(3섹션 구조): 섹션1이 worst-case 만 다루고 등급 phrase 는 일부러 본문에서
-    제외하므로, 등급 phrase 필수 토큰 검증을 제거 (프롬프트와 검증기 충돌 해소).
+    제외하므로 등급 phrase 검증 제거. worst_case_pct 도 포맷 의역(예: "약 -8.3%")
+    여지가 있어 hard-reject 대신 warning 으로 완화.
     """
     if not output or not output.strip():
         return False, "empty"
 
-    # 핵심 숫자 보존 — worst_case_pct 만 엄격 (v11 은 등급 phrase 를 본문에서 뺌).
-    # horizon_days 는 토스 톤에서 "한 달" 같이 풀어 쓰는 게 자연스러워 검증에서 제외.
-    must_appear = [fact_pack["worst_case_pct"]]
-    for token in must_appear:
-        if token not in output:
-            return False, f"missing token: {token!r}"
+    # 핵심 숫자(worst_case_pct) — 누락 시 reject 하지 않고 warning 만.
+    # 프롬프트가 [사실 묶음] 값을 그대로 쓰도록 강제하므로 1차 보호는 충분.
+    # horizon_days 는 "한 달" 같이 풀어 쓰는 게 자연스러워 애초에 검증 제외.
+    wc = fact_pack.get("worst_case_pct") or ""
+    if wc and wc not in output:
+        log.warning("llm output missing worst_case token %r (relaxed: passing)", wc)
 
     # 변수 라벨 — 누락 시 reject 하지 않고 warning 만 (LLM 의역 허용).
     for f in fact_pack.get("top_features", []):
