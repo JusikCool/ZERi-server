@@ -62,6 +62,9 @@ jobs:
     env:
       API_BASE: ${{ secrets.API_BASE_URL }}
       OP_KEY: ${{ secrets.OPERATOR_API_KEY }}
+      # Node.js 20 actions 가 2026-09-16 제거되므로 Node.js 24 로 선제 전환.
+      # (GitHub 공식 권장 환경변수, 워크플로우 안의 모든 JS actions 에 일괄 적용됨.)
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       # 사전 점검 — Secrets 가 비어있으면 즉시 실패 (조용히 200 떨어지는 사고 방지)
@@ -135,11 +138,11 @@ jobs:
       - name: Run LLM explanations (Upstage Solar)
         id: llm
         if: ${{ inputs.skip_inference != 'true' && inputs.skip_llm != 'true' }}
-        timeout-minutes: 6
+        timeout-minutes: 18
         run: |
           set -e
           echo "POST $API_BASE/v1/risk/sync/run-llm-explanations"
-          response=$(curl -fsS --max-time 330 -X POST \
+          response=$(curl -fsS --max-time 900 -X POST \
             "$API_BASE/v1/risk/sync/run-llm-explanations" \
             -H "X-Operator-Key: $OP_KEY" \
             -H "Content-Type: application/json" \
@@ -154,9 +157,13 @@ jobs:
       # 추론 step 이 끝나야 의미 있음 (predictions 가 최신이어야 변화 감지).
       # FCM 시크릿이 서버에 없으면 발송 자체는 INTERNAL_ERROR — workflow 는 fail.
       # FCM 셋업 완료 전까지는 workflow_dispatch 의 skip_trigger=true 로 우회.
+      #
+      # always() — 직전 LLM step 이 실패해도 알림은 발송. LLM 캐시는 부수 서비스이고
+      # 알림 발송은 사용자 핵심 가치라 두 도메인을 격리. LLM 실패 자체는 워크플로우
+      # 빨간불로 그대로 노출되어 운영자가 인지 가능 (continue-on-error 미사용).
       - name: Trigger watchlist grade-change notifications
         id: trigger
-        if: ${{ inputs.skip_inference != 'true' && inputs.skip_trigger != 'true' }}
+        if: ${{ always() && inputs.skip_inference != 'true' && inputs.skip_trigger != 'true' }}
         timeout-minutes: 5
         run: |
           set -e

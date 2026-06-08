@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
@@ -31,6 +32,7 @@ from app.db.models import (
     Ticker,
     XaiExplanation,
 )
+from app.db.session import SessionLocal
 from app.services.upstage_service import (
     LLMCallError,
     LLMNotConfiguredError,
@@ -304,16 +306,28 @@ async def generate_for_ticker(
     )
 
 
+# 동시 Upstage 호출 상한. 50종목 × Upstage 평균 5~10s 를 ~70~140s 로 단축.
+# pool size (5 + overflow 10) 안에서 안전. Upstage 무료 플랜 rate limit 도 고려.
+_DEFAULT_CONCURRENCY = 5
+
+
 async def generate_for_active_tickers(
     session: AsyncSession,
     llm_model_label: str,
     tickers: list[str] | None = None,
+    concurrency: int = _DEFAULT_CONCURRENCY,
 ) -> list[TickerResult]:
-    """전체 active 종목 (또는 명시된 tickers) 순회. cron 진입점.
+    """전체 active 종목 (또는 명시된 tickers) 병렬 생성. cron 진입점.
 
-    트랜잭션 정책: 한 종목씩 UPSERT 하되 batch 마지막에 한 번만 commit.
-    중간 종목이 실패해도 다른 종목 결과는 살아남도록 per-ticker try/except 는
-    generate_for_ticker 가 책임. 진짜 예외 (DB connection drop 등) 만 여기로 올라옴.
+    동시성 정책:
+    - Semaphore(concurrency) 로 Upstage 동시 호출을 제한 (default 5).
+    - 각 ticker 마다 자체 AsyncSession 을 사용해 DB I/O 직렬화 회피.
+      (단일 session 공유는 asyncpg 단일 connection 에서 작업이 직렬화되어
+       병렬 효과가 사라짐.)
+    - 부모 session 은 ticker 목록 조회 (read-only) 에만 사용.
+
+    트랜잭션 정책: 각 ticker 의 own_session 이 자기 트랜잭션을 별도로 commit.
+    한 종목 실패가 다른 종목 결과에 영향 X (per-ticker try/except 가 격리).
     """
     if tickers is None:
         rows = (
@@ -325,16 +339,21 @@ async def generate_for_active_tickers(
     else:
         target = [t.upper() for t in tickers]
 
-    results: list[TickerResult] = []
-    for ticker in target:
-        try:
-            result = await generate_for_ticker(session, ticker, llm_model_label)
-        except Exception as e:  # noqa: BLE001 — 다음 종목으로 진행
-            log.exception("generate_for_ticker crashed ticker=%s", ticker)
-            result = TickerResult(
-                ticker=ticker, ok=False, fallback_used=False, error=f"crashed: {e}"
-            )
-        results.append(result)
+    sem = asyncio.Semaphore(concurrency)
 
-    await session.commit()
-    return results
+    async def _one(ticker: str) -> TickerResult:
+        async with sem:
+            try:
+                async with SessionLocal() as own_session:
+                    result = await generate_for_ticker(
+                        own_session, ticker, llm_model_label
+                    )
+                    await own_session.commit()
+                    return result
+            except Exception as e:  # noqa: BLE001 — 다음 종목으로 진행
+                log.exception("generate_for_ticker crashed ticker=%s", ticker)
+                return TickerResult(
+                    ticker=ticker, ok=False, fallback_used=False, error=f"crashed: {e}"
+                )
+
+    return await asyncio.gather(*[_one(t) for t in target])
