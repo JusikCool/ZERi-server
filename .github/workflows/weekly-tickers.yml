@@ -28,6 +28,8 @@ jobs:
     env:
       API_BASE: ${{ secrets.API_BASE_URL }}
       OP_KEY: ${{ secrets.OPERATOR_API_KEY }}
+      # Node.js 20 actions 가 2026-09-16 제거되므로 Node.js 24 로 선제 전환.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Verify secrets are configured
